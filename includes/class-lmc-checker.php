@@ -65,16 +65,12 @@ class LMC_Checker {
 			$confirmed_ok = ( empty( $http['error'] ) && $http['status'] < 400 );
 		}
 
-		// 末尾欠けの「疑い」は、実際にアクセスできたなら警告に降格する
+		// 末尾欠けの「疑い」は、実際にアクセスできたなら報告しない
 		// （?param= のように「=」等で終わる正当なURLもあるため）。
 		if ( $confirmed_ok ) {
-			foreach ( $issues as &$issue ) {
-				if ( 'truncated' === $issue['code'] && self::SEVERITY_ERROR === $issue['severity'] ) {
-					$issue['severity'] = self::SEVERITY_WARNING;
-					$issue['message'] .= '（リンク自体は開けました）';
-				}
-			}
-			unset( $issue );
+			$issues = array_values( array_filter( $issues, function ( $issue ) {
+				return 'truncated' !== $issue['code'];
+			} ) );
 		}
 
 		return $issues;
