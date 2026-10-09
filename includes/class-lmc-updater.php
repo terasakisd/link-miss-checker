@@ -26,6 +26,17 @@ class LMC_Updater {
 	public static function init() {
 		add_filter( 'pre_set_site_transient_update_plugins', array( __CLASS__, 'check_update' ) );
 		add_filter( 'plugins_api', array( __CLASS__, 'plugin_info' ), 10, 3 );
+		// 「ダッシュボード > 更新 > もう一度確認する」でGitHubキャッシュも破棄して即時反映。
+		add_action( 'load-update-core.php', array( __CLASS__, 'maybe_purge_cache' ) );
+	}
+
+	/**
+	 * 更新画面の再確認（force-check）時にリリース情報のキャッシュを破棄する。
+	 */
+	public static function maybe_purge_cache() {
+		if ( isset( $_GET['force-check'] ) ) {
+			delete_transient( self::TRANSIENT_KEY );
+		}
 	}
 
 	/**
