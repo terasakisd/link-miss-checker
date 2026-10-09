@@ -467,6 +467,14 @@ class LMC_Checker {
 			}
 		}
 
+		// 除外リストに一致するリンクはチェック対象外。
+		$exclude = LMC_Settings::exclude_patterns();
+		if ( $exclude ) {
+			$links = array_values( array_filter( $links, function ( $link ) use ( $exclude ) {
+				return ! LMC_Extractor::matches_patterns( $link['url'], $exclude );
+			} ) );
+		}
+
 		if ( $options['ad_only'] ) {
 			$links = LMC_Extractor::filter_ad_links( $links, LMC_Settings::ad_domains() );
 		}

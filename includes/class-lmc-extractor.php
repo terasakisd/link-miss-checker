@@ -124,20 +124,32 @@ class LMC_Extractor {
 			return array();
 		}
 		return array_values( array_filter( $links, function ( $link ) use ( $patterns ) {
-			$url  = $link['url'];
-			$host = wp_parse_url( $url, PHP_URL_HOST );
-			foreach ( $patterns as $pattern ) {
-				if ( false !== strpos( $pattern, '/' ) ) {
-					// パスつきパターン: URL部分一致。
-					if ( false !== strpos( $url, $pattern ) ) {
-						return true;
-					}
-				} elseif ( $host && ( $host === $pattern || str_ends_with( $host, '.' . $pattern ) ) ) {
+			return self::matches_patterns( $link['url'], $patterns );
+		} ) );
+	}
+
+	/**
+	 * URLがパターンリストのいずれかに一致するか。
+	 *
+	 * @param string   $url      対象URL。
+	 * @param string[] $patterns 「/」なし=ドメイン一致（サブドメイン含む）、「/」あり=URL部分一致。
+	 */
+	public static function matches_patterns( $url, $patterns ) {
+		$host = wp_parse_url( $url, PHP_URL_HOST );
+		foreach ( (array) $patterns as $pattern ) {
+			if ( '' === $pattern ) {
+				continue;
+			}
+			if ( false !== strpos( $pattern, '/' ) ) {
+				// パスつきパターン: URL部分一致。
+				if ( false !== strpos( $url, $pattern ) ) {
 					return true;
 				}
+			} elseif ( $host && ( $host === $pattern || str_ends_with( $host, '.' . $pattern ) ) ) {
+				return true;
 			}
-			return false;
-		} ) );
+		}
+		return false;
 	}
 
 	private static function clean_text( $text ) {

@@ -23,6 +23,7 @@ class LMC_Settings {
 			'scan_scope'           => 'ad_only', // ad_only | all（週次巡回の対象）
 			'timeout'              => 10,
 			'block_on_error'       => 1,
+			'exclude_patterns'     => '',
 			'detect_js_links'      => 1,
 			'js_button_id_prefix'  => 'bt',
 			'scan_post_types'      => array( 'post', 'page' ),
@@ -45,6 +46,15 @@ class LMC_Settings {
 		$raw = (string) self::get( 'ad_domains' );
 		$domains = array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', $raw ) ) );
 		return array_values( array_unique( $domains ) );
+	}
+
+	/**
+	 * 除外パターンを配列で取得。
+	 */
+	public static function exclude_patterns() {
+		$raw = (string) self::get( 'exclude_patterns' );
+		$patterns = array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', $raw ) ) );
+		return array_values( array_unique( $patterns ) );
 	}
 
 	public static function init() {
@@ -111,6 +121,7 @@ class LMC_Settings {
 		$out['scan_scope']      = in_array( $input['scan_scope'] ?? 'ad_only', array( 'ad_only', 'all' ), true ) ? $input['scan_scope'] : 'ad_only';
 		$out['timeout']         = max( 3, min( 30, (int) ( $input['timeout'] ?? 10 ) ) );
 		$out['block_on_error']  = empty( $input['block_on_error'] ) ? 0 : 1;
+		$out['exclude_patterns'] = sanitize_textarea_field( $input['exclude_patterns'] ?? '' );
 		$out['detect_js_links'] = empty( $input['detect_js_links'] ) ? 0 : 1;
 		$out['js_button_id_prefix'] = sanitize_text_field( $input['js_button_id_prefix'] ?? 'bt' );
 
@@ -161,6 +172,11 @@ class LMC_Settings {
 						<div class="lmc-field">
 							<span class="lmc-field-label">タイムアウト</span>
 							<span><input type="number" min="3" max="30" name="<?php echo esc_attr( $k ); ?>[timeout]" value="<?php echo esc_attr( $s['timeout'] ); ?>" class="lmc-num"> 秒</span>
+						</div>
+						<div class="lmc-field lmc-field-block">
+							<span class="lmc-field-label">除外リスト</span>
+							<textarea name="<?php echo esc_attr( $k ); ?>[exclude_patterns]" rows="4" placeholder="example.com&#10;/campaign/"><?php echo esc_textarea( $s['exclude_patterns'] ); ?></textarea>
+							<span class="lmc-hint">ここに書いたリンクはチェックしません。1行1つ。example.com = ドメイン一致 ／ /path/ = URL部分一致。bot対策で403警告が出続けるサイトなどに</span>
 						</div>
 					</section>
 

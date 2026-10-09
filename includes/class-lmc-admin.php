@@ -135,9 +135,8 @@ class LMC_Admin {
 					<table class="widefat striped">
 						<thead>
 							<tr>
-								<th style="width:20%;">記事</th>
-								<th style="width:30%;">リンクURL</th>
-								<th style="width:15%;">見出し</th>
+								<th style="width:22%;">記事</th>
+								<th style="width:35%;">リンクURL</th>
 								<th>問題</th>
 							</tr>
 						</thead>
@@ -154,7 +153,6 @@ class LMC_Admin {
 											<?php echo esc_html( mb_strimwidth( $issue['url'], 0, 80, '…' ) ); ?>
 										</a>
 									</td>
-									<td><?php echo esc_html( $issue['heading'] ); ?></td>
 									<td>
 										<?php foreach ( $issue['problems'] as $problem ) : ?>
 											<span class="lmc-badge lmc-badge-<?php echo esc_attr( $problem['severity'] ); ?>">
