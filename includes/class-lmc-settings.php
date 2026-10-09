@@ -203,7 +203,7 @@ class LMC_Settings {
 						<div class="lmc-field lmc-field-block">
 							<span class="lmc-field-label">広告リンクのパターン</span>
 							<textarea name="<?php echo esc_attr( $k ); ?>[ad_domains]" rows="6"><?php echo esc_textarea( $s['ad_domains'] ); ?></textarea>
-							<span class="lmc-hint">1行1つ。a8.net = ドメイン一致 ／ /code/ = URL部分一致（自ドメインのクッションページ用）</span>
+							<span class="lmc-hint">1行1つ。example.com = ドメイン一致 ／ /code/ = URL部分一致（自ドメインのクッションページ用）</span>
 						</div>
 						<div class="lmc-field">
 							<span class="lmc-field-label">投稿タイプ</span>
