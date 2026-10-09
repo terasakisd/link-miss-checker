@@ -28,6 +28,61 @@ class LMC_Updater {
 		add_filter( 'plugins_api', array( __CLASS__, 'plugin_info' ), 10, 3 );
 		// 「ダッシュボード > 更新 > もう一度確認する」でGitHubキャッシュも破棄して即時反映。
 		add_action( 'load-update-core.php', array( __CLASS__, 'maybe_purge_cache' ) );
+		// プラグイン一覧の行に「更新を確認」リンクを追加。
+		add_filter( 'plugin_action_links_' . plugin_basename( LMC_PLUGIN_FILE ), array( __CLASS__, 'action_links' ) );
+		add_action( 'admin_post_lmc_check_update', array( __CLASS__, 'handle_check_update' ) );
+		add_action( 'admin_notices', array( __CLASS__, 'check_result_notice' ) );
+	}
+
+	/**
+	 * プラグイン一覧の「更新を確認」リンク。
+	 */
+	public static function action_links( $links ) {
+		$url = wp_nonce_url( admin_url( 'admin-post.php?action=lmc_check_update' ), 'lmc_check_update' );
+		array_unshift( $links, '<a href="' . esc_url( $url ) . '">更新を確認</a>' );
+		return $links;
+	}
+
+	/**
+	 * 「更新を確認」クリック時: キャッシュを全部捨てて今すぐGitHubを確認する。
+	 */
+	public static function handle_check_update() {
+		if ( ! current_user_can( 'update_plugins' ) || ! check_admin_referer( 'lmc_check_update' ) ) {
+			wp_die( '権限がありません' );
+		}
+
+		delete_transient( self::TRANSIENT_KEY );
+		delete_site_transient( 'update_plugins' );
+		wp_update_plugins();
+
+		$t   = get_site_transient( 'update_plugins' );
+		$key = plugin_basename( LMC_PLUGIN_FILE );
+
+		if ( isset( $t->response[ $key ] ) ) {
+			$arg = 'found&lmc_new_version=' . rawurlencode( $t->response[ $key ]->new_version );
+		} else {
+			$arg = 'none';
+		}
+
+		wp_safe_redirect( admin_url( 'plugins.php?lmc_update_check=' . $arg ) );
+		exit;
+	}
+
+	/**
+	 * 確認結果の通知表示。
+	 */
+	public static function check_result_notice() {
+		if ( ! isset( $_GET['lmc_update_check'] ) ) {
+			return;
+		}
+		if ( 'found' === $_GET['lmc_update_check'] ) {
+			$version = sanitize_text_field( wp_unslash( $_GET['lmc_new_version'] ?? '' ) );
+			echo '<div class="notice notice-warning is-dismissible"><p>リンクミス発見ツールの新しいバージョン'
+				. ( $version ? '（' . esc_html( $version ) . '）' : '' )
+				. 'があります。下の一覧から更新してください。</p></div>';
+		} else {
+			echo '<div class="notice notice-success is-dismissible"><p>リンクミス発見ツールは最新バージョン（' . esc_html( LMC_VERSION ) . '）です。</p></div>';
+		}
 	}
 
 	/**
