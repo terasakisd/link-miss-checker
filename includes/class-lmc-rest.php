@@ -18,6 +18,14 @@ class LMC_Rest {
 	}
 
 	public static function register_routes() {
+		// 直近スキャンでbot対策に弾かれた(403/429)リンクの一覧。
+		// Mac側の再検証ツールが取得する。URL自体は公開記事に載っているものなので公開可。
+		register_rest_route( 'lmc/v1', '/blocked', array(
+			'methods'             => 'GET',
+			'permission_callback' => '__return_true',
+			'callback'            => array( __CLASS__, 'handle_blocked' ),
+		) );
+
 		register_rest_route( 'lmc/v1', '/check', array(
 			'methods'             => 'POST',
 			'callback'            => array( __CLASS__, 'handle_check' ),
@@ -36,6 +44,34 @@ class LMC_Rest {
 					'default'  => '',
 				),
 			),
+		) );
+	}
+
+	/**
+	 * 直近スキャンのbot拒否(http_blocked)リンク一覧を返す。
+	 */
+	public static function handle_blocked() {
+		$results = get_option( LMC_Cron::OPTION_RESULTS, null );
+		$blocked = array();
+
+		if ( is_array( $results ) && ! empty( $results['issues'] ) ) {
+			foreach ( $results['issues'] as $issue ) {
+				foreach ( $issue['problems'] as $problem ) {
+					if ( 'http_blocked' === ( $problem['code'] ?? '' ) ) {
+						$blocked[] = array(
+							'url'        => $issue['url'],
+							'post_title' => $issue['post_title'] ?? '',
+						);
+						break;
+					}
+				}
+			}
+		}
+
+		return rest_ensure_response( array(
+			'site'       => get_bloginfo( 'name' ),
+			'scanned_at' => is_array( $results ) ? ( $results['finished_at'] ?? '' ) : '',
+			'blocked'    => $blocked,
 		) );
 	}
 
