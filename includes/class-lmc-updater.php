@@ -137,7 +137,7 @@ class LMC_Updater {
 			'name'          => 'リンクミス発見ツール',
 			'slug'          => 'link-miss-checker',
 			'version'       => $release['version'],
-			'author'        => 'Southerndia',
+			'author'        => 'Mikuru Terasaki',
 			'homepage'      => 'https://github.com/' . self::REPO,
 			'download_link' => $release['package'],
 			'sections'      => array(
