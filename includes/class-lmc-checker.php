@@ -58,9 +58,23 @@ class LMC_Checker {
 
 		// --- 4. 実アクセス確認 ---
 		// 内部リンクとして確認済み、または内部チェックで問題確定済みならアクセス省略。
+		$confirmed_ok = $internal['is_internal_ok'];
 		if ( $options['check_http'] && ! $internal['is_internal_ok'] && empty( $internal['issues'] ) ) {
 			$http = self::fetch( $url );
 			$issues = array_merge( $issues, self::check_http_result( $url, $http ) );
+			$confirmed_ok = ( empty( $http['error'] ) && $http['status'] < 400 );
+		}
+
+		// 末尾欠けの「疑い」は、実際にアクセスできたなら警告に降格する
+		// （?param= のように「=」等で終わる正当なURLもあるため）。
+		if ( $confirmed_ok ) {
+			foreach ( $issues as &$issue ) {
+				if ( 'truncated' === $issue['code'] && self::SEVERITY_ERROR === $issue['severity'] ) {
+					$issue['severity'] = self::SEVERITY_WARNING;
+					$issue['message'] .= '（リンク自体は開けました）';
+				}
+			}
+			unset( $issue );
 		}
 
 		return $issues;
