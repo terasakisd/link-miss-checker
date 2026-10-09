@@ -117,8 +117,8 @@ class LMC_Notifier {
 				return 'リンク先が非公開';
 			case 'redirect_to_top':
 				return 'トップページへ転送（削除の可能性）';
-			case 'title_mismatch':
-				return '別商品の疑い';
+			case 'http_blocked':
+				return 'アクセス拒否（bot対策の可能性）';
 			case 'js_unresolved':
 				return 'JSリンクの遷移先なし';
 		}

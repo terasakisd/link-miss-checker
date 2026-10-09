@@ -112,9 +112,7 @@ class LMC_Cron {
 			}
 
 			$result = LMC_Checker::check_content( $post->post_content, array(
-				'ad_only'     => $ad_only,
-				// 週次巡回では見出し照合もまとめて実施（追加リクエスト不要のため）。
-				'check_title' => (bool) LMC_Settings::get( 'check_title_match' ),
+				'ad_only' => $ad_only,
 			) );
 
 			foreach ( $result['issues'] as $issue ) {

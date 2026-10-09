@@ -22,8 +22,6 @@ class LMC_Settings {
 			'ad_domains'           => (string) wp_parse_url( home_url(), PHP_URL_HOST ),
 			'scan_scope'           => 'ad_only', // ad_only | all（週次巡回の対象）
 			'timeout'              => 10,
-			'similarity_threshold' => 0.35,
-			'check_title_match'    => 1,
 			'block_on_error'       => 1,
 			'detect_js_links'      => 1,
 			'js_button_id_prefix'  => 'bt',
@@ -112,8 +110,6 @@ class LMC_Settings {
 		$out['ad_domains']      = sanitize_textarea_field( $input['ad_domains'] ?? $defaults['ad_domains'] );
 		$out['scan_scope']      = in_array( $input['scan_scope'] ?? 'ad_only', array( 'ad_only', 'all' ), true ) ? $input['scan_scope'] : 'ad_only';
 		$out['timeout']         = max( 3, min( 30, (int) ( $input['timeout'] ?? 10 ) ) );
-		$out['similarity_threshold'] = max( 0, min( 1, (float) ( $input['similarity_threshold'] ?? 0.35 ) ) );
-		$out['check_title_match'] = empty( $input['check_title_match'] ) ? 0 : 1;
 		$out['block_on_error']  = empty( $input['block_on_error'] ) ? 0 : 1;
 		$out['detect_js_links'] = empty( $input['detect_js_links'] ) ? 0 : 1;
 		$out['js_button_id_prefix'] = sanitize_text_field( $input['js_button_id_prefix'] ?? 'bt' );
@@ -162,12 +158,6 @@ class LMC_Settings {
 					<section class="lmc-card">
 						<h2>更新前チェック</h2>
 						<div class="lmc-field"><?php self::toggle( 'block_on_error', 'エラー時に更新を止める', $s['block_on_error'] ); ?></div>
-						<div class="lmc-field">
-							<?php self::toggle( 'check_title_match', '別商品リンクの検出', $s['check_title_match'] ); ?>
-							<span class="lmc-inline">しきい値
-								<input type="number" step="0.05" min="0" max="1" name="<?php echo esc_attr( $k ); ?>[similarity_threshold]" value="<?php echo esc_attr( $s['similarity_threshold'] ); ?>">
-							</span>
-						</div>
 						<div class="lmc-field">
 							<span class="lmc-field-label">タイムアウト</span>
 							<span><input type="number" min="3" max="30" name="<?php echo esc_attr( $k ); ?>[timeout]" value="<?php echo esc_attr( $s['timeout'] ); ?>" class="lmc-num"> 秒</span>

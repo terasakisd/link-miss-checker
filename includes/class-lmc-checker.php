@@ -27,13 +27,12 @@ class LMC_Checker {
 	 * リンク1件を検査して問題の配列を返す。
 	 *
 	 * @param array $link    LMC_Extractor::extract() の1要素。
-	 * @param array $options check_http / check_title の有効・無効など。
+	 * @param array $options check_http の有効・無効など。
 	 * @return array[] 各問題: code, severity, message
 	 */
 	public static function check_link( $link, $options = array() ) {
 		$options = wp_parse_args( $options, array(
-			'check_http'  => true,
-			'check_title' => (bool) LMC_Settings::get( 'check_title_match' ),
+			'check_http' => true,
 		) );
 
 		$issues = array();
@@ -62,11 +61,6 @@ class LMC_Checker {
 		if ( $options['check_http'] && ! $internal['is_internal_ok'] && empty( $internal['issues'] ) ) {
 			$http = self::fetch( $url );
 			$issues = array_merge( $issues, self::check_http_result( $url, $http ) );
-
-			// --- 5. 商品名照合（アクセス成功時のみ） ---
-			if ( $options['check_title'] && empty( $http['error'] ) && $http['status'] < 400 && '' !== $link['heading'] ) {
-				$issues = array_merge( $issues, self::check_title_match( $link, $http ) );
-			}
 		}
 
 		return $issues;
@@ -241,6 +235,16 @@ class LMC_Checker {
 			return $issues;
 		}
 
+		// 403/429はbot対策で弾かれているだけの可能性が高いため、警告止まりにする。
+		if ( in_array( $http['status'], array( 403, 429 ), true ) ) {
+			$issues[] = array(
+				'code'     => 'http_blocked',
+				'severity' => self::SEVERITY_WARNING,
+				'message'  => 'アクセスが拒否されました（HTTP ' . $http['status'] . '）。bot対策の可能性があり、ブラウザでは正常に見られる場合があります',
+			);
+			return $issues;
+		}
+
 		if ( $http['status'] >= 400 ) {
 			$issues[] = array(
 				'code'     => 'http_error',
@@ -270,46 +274,6 @@ class LMC_Checker {
 	}
 
 	/**
-	 * リンク先タイトルと直前見出しの商品名照合。
-	 */
-	public static function check_title_match( $link, $http ) {
-		$issues = array();
-		$title  = self::extract_page_title( (string) $http['body'] );
-		if ( '' === $title || '' === $link['heading'] ) {
-			return $issues;
-		}
-
-		$heading = self::normalize_for_match( $link['heading'] );
-		$t       = self::normalize_for_match( $title );
-
-		// どちらかがもう一方を含んでいればOK。
-		if ( '' === $heading || '' === $t ) {
-			return $issues;
-		}
-		if ( false !== mb_strpos( $t, $heading ) || false !== mb_strpos( $heading, $t ) ) {
-			return $issues;
-		}
-
-		$similarity = self::bigram_similarity( $heading, $t );
-		$threshold  = (float) LMC_Settings::get( 'similarity_threshold' );
-
-		if ( $similarity < $threshold ) {
-			$issues[] = array(
-				'code'     => 'title_mismatch',
-				'severity' => self::SEVERITY_WARNING,
-				'message'  => sprintf(
-					'リンク先のタイトル「%s」と見出し「%s」が一致していない可能性があります（類似度 %.2f）。別の商品のリンクを貼っていないか確認してください',
-					mb_substr( $title, 0, 50 ),
-					mb_substr( $link['heading'], 0, 50 ),
-					$similarity
-				),
-			);
-		}
-
-		return $issues;
-	}
-
-	/**
 	 * URLへ実アクセスし、ステータス・最終URL・本文を返す。
 	 * リダイレクトは手動で追跡して最終URLを記録する。
 	 */
@@ -322,7 +286,8 @@ class LMC_Checker {
 		$args    = array(
 			'timeout'     => $timeout,
 			'redirection' => 0,
-			'user-agent'  => 'Mozilla/5.0 (compatible; LinkMissChecker/' . LMC_VERSION . '; +' . home_url() . ')',
+			// bot対策のあるサイトが偽の404/403を返さないよう、通常のブラウザと同じUAを使う。
+			'user-agent'  => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 			'headers'     => array(
 				'Accept'          => 'text/html,application/xhtml+xml,*/*;q=0.8',
 				'Accept-Language' => 'ja,en;q=0.8',
@@ -434,65 +399,6 @@ class LMC_Checker {
 		}
 		$dir = isset( $base['path'] ) ? rtrim( dirname( $base['path'] ), '/' ) : '';
 		return $origin . $dir . '/' . $target;
-	}
-
-	/**
-	 * HTML本文から og:title または <title> を取得。
-	 */
-	public static function extract_page_title( $html ) {
-		if ( preg_match( '/<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']/iu', $html, $m )
-			|| preg_match( '/<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:title["\']/iu', $html, $m ) ) {
-			return html_entity_decode( trim( $m[1] ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
-		}
-		if ( preg_match( '/<title[^>]*>(.*?)<\/title>/isu', $html, $m ) ) {
-			return html_entity_decode( trim( $m[1] ), ENT_QUOTES | ENT_HTML5, 'UTF-8' );
-		}
-		return '';
-	}
-
-	/**
-	 * 照合用にテキストを正規化（記号・空白除去、小文字化、カナ統一はせず簡易に）。
-	 */
-	private static function normalize_for_match( $text ) {
-		$text = mb_strtolower( $text );
-		// サイト名サフィックス（「 | ショップ名」「 - 楽天市場」等）を除去。
-		$text = preg_replace( '/\s*[|｜\-–—:：]\s*[^|｜\-–—:：]{1,30}$/u', '', $text );
-		// 記号と空白を除去。
-		$text = preg_replace( '/[\s\p{P}\p{S}]+/u', '', $text );
-		return (string) $text;
-	}
-
-	/**
-	 * バイグラムによるDice係数（日本語向けの簡易類似度）。
-	 */
-	private static function bigram_similarity( $a, $b ) {
-		$bigrams = function ( $str ) {
-			$grams = array();
-			$len   = mb_strlen( $str );
-			if ( $len < 2 ) {
-				return $len ? array( $str => 1 ) : array();
-			}
-			for ( $i = 0; $i < $len - 1; $i++ ) {
-				$gram = mb_substr( $str, $i, 2 );
-				$grams[ $gram ] = ( $grams[ $gram ] ?? 0 ) + 1;
-			}
-			return $grams;
-		};
-
-		$ga = $bigrams( $a );
-		$gb = $bigrams( $b );
-		if ( ! $ga || ! $gb ) {
-			return 0.0;
-		}
-
-		$intersection = 0;
-		foreach ( $ga as $gram => $count ) {
-			if ( isset( $gb[ $gram ] ) ) {
-				$intersection += min( $count, $gb[ $gram ] );
-			}
-		}
-
-		return ( 2 * $intersection ) / ( array_sum( $ga ) + array_sum( $gb ) );
 	}
 
 	/**
