@@ -3,7 +3,7 @@
  * Plugin Name: リンクミス発見ツール
  * Plugin URI:  https://github.com/terasakisd/link-miss-checker
  * Description: 記事更新前にリンク切れ・末尾欠け・パラメータ重複・旧スラッグ・商品名不一致を自動チェックし、問題があれば更新を止めます。週1回の全記事巡回とチャット通知も行います。
- * Version:     1.16.3
+ * Version:     1.16.4
  * Author:      Mikuru Terasaki
  * License:     GPL-2.0-or-later
  * Text Domain: link-miss-checker
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LMC_VERSION', '1.16.3' );
+define( 'LMC_VERSION', '1.16.4' );
 define( 'LMC_PLUGIN_FILE', __FILE__ );
 define( 'LMC_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'LMC_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

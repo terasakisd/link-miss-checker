@@ -283,14 +283,24 @@ class LMC_Checker {
 		}
 
 		$timeout = (int) LMC_Settings::get( 'timeout' );
-		$args    = array(
+		// bot対策のあるサイトが偽の404/403を返さないよう、UAだけでなく
+		// Chromeが実際に送るヘッダー一式をすべて付けてブラウザとして振る舞う。
+		$args = array(
 			'timeout'     => $timeout,
 			'redirection' => 0,
-			// bot対策のあるサイトが偽の404/403を返さないよう、通常のブラウザと同じUAを使う。
 			'user-agent'  => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 			'headers'     => array(
-				'Accept'          => 'text/html,application/xhtml+xml,*/*;q=0.8',
-				'Accept-Language' => 'ja,en;q=0.8',
+				'Accept'                    => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+				'Accept-Language'           => 'ja,en-US;q=0.9,en;q=0.8',
+				'Cache-Control'             => 'max-age=0',
+				'Upgrade-Insecure-Requests' => '1',
+				'Sec-Fetch-Dest'            => 'document',
+				'Sec-Fetch-Mode'            => 'navigate',
+				'Sec-Fetch-Site'            => 'none',
+				'Sec-Fetch-User'            => '?1',
+				'sec-ch-ua'                 => '"Chromium";v="131", "Google Chrome";v="131", "Not_A Brand";v="24"',
+				'sec-ch-ua-mobile'          => '?0',
+				'sec-ch-ua-platform'        => '"macOS"',
 			),
 		);
 
