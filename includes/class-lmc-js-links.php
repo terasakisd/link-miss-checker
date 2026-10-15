@@ -31,13 +31,51 @@ class LMC_JS_Links {
 	 */
 	public static function get_map( $content = '', $post_id = 0 ) {
 		$map = self::theme_map();
-		foreach ( self::meta_map( $post_id ) as $id => $url ) {
+		foreach ( self::page_map( $post_id ) as $id => $url ) {
 			$map[ $id ] = $url;
 		}
 		foreach ( self::content_map( $content ) as $id => $url ) {
 			$map[ $id ] = $url;
 		}
 		return $map;
+	}
+
+	/**
+	 * 公開ページの実際のHTML（wp_footer出力後の最終形）からJSリンク定義を抽出。
+	 *
+	 * カスタムJS欄の「wp_footerで出力されます」という表記は当てにせず、
+	 * 実際にページへ出力されているかどうかで判定する。出力処理が壊れていて
+	 * 定義がページに現れない場合は、未解決＝エラーとして検出される。
+	 *
+	 * ページを取得できない場合（未公開・自己リクエスト不可の環境など）のみ、
+	 * カスタムフィールドの保存値にフォールバックする。
+	 *
+	 * @param int $post_id 投稿ID。
+	 * @return array<string,string>
+	 */
+	public static function page_map( $post_id ) {
+		$post_id = (int) $post_id;
+		if ( ! $post_id ) {
+			return array();
+		}
+
+		// 未公開記事はページ取得ができないため保存値で判定。
+		if ( 'publish' !== get_post_status( $post_id ) ) {
+			return self::meta_map( $post_id );
+		}
+
+		$url = get_permalink( $post_id );
+		if ( ! $url ) {
+			return self::meta_map( $post_id );
+		}
+
+		$response = wp_remote_get( $url, array( 'timeout' => 10, 'redirection' => 3 ) );
+		if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
+			return self::meta_map( $post_id );
+		}
+
+		// 取得に成功したら、実際に出力されているscriptだけを信頼する。
+		return self::content_map( wp_remote_retrieve_body( $response ) );
 	}
 
 	/**
