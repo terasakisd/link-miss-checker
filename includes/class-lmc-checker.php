@@ -251,7 +251,7 @@ class LMC_Checker {
 			$issues[] = array(
 				'code'     => 'ssl_problem',
 				'severity' => self::SEVERITY_WARNING,
-				'message'  => 'SSL証明書を検証できませんでしたが、リンク先は応答しています（HTTP ' . $http['status'] . '）。ブラウザでは通常問題なく開けます（チェック元サーバーのルート証明書が古い可能性）',
+				'message'  => 'SSL証明書を検証できませんでしたが、リンク先は応答しています（HTTP ' . $http['status'] . '）。ブラウザでは通常問題なく開けます。このサイトのサーバーのルート証明書が古い可能性があるため、サーバーのPHPバージョンを最新に更新してください',
 			);
 		}
 
