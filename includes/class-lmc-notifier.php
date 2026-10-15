@@ -117,8 +117,6 @@ class LMC_Notifier {
 				return 'リンク先が非公開';
 			case 'redirect_to_top':
 				return 'トップページへ転送（削除の可能性）';
-			case 'http_blocked':
-				return 'アクセス拒否（bot対策の可能性）';
 			case 'ssl_expired':
 				return 'SSL証明書の期限切れ';
 			case 'js_unresolved':

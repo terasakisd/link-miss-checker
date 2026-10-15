@@ -255,20 +255,10 @@ class LMC_Checker {
 			);
 		}
 
-		// 401/403/429はbot対策で弾かれているだけの可能性が高い
+		// 401/403/429はbot対策による拒否がほとんどで、読者のブラウザでは
+		// 正常に開けるケースが大半のため、一切報告しない
 		// （企業サイトのFAQ等は正規ブラウザ以外に401を返すものがある）。
 		if ( in_array( $http['status'], array( 401, 403, 429 ), true ) ) {
-			// リダイレクトやクッションページを1ホップ以上通過した末の403なら、
-			// 自分のクッション・ASPなど検証可能な区間はすべて正常に機能している。
-			// 最終到達先(広告主)のbot対策に止められただけなので問題なし扱い。
-			if ( ! empty( $http['redirected'] ) ) {
-				return $issues;
-			}
-			$issues[] = array(
-				'code'     => 'http_blocked',
-				'severity' => self::SEVERITY_WARNING,
-				'message'  => 'アクセスが拒否されました（HTTP ' . $http['status'] . '）。bot対策の可能性があり、ブラウザでは正常に見られる場合があります',
-			);
 			return $issues;
 		}
 
