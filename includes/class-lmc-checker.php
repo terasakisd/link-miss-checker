@@ -245,13 +245,13 @@ class LMC_Checker {
 			return $issues;
 		}
 
-		// SSL検証は失敗したが、検証なしの再試行では応答があった場合。
-		// ブラウザでは正常に開けることが多い（チェック元サーバーの証明書ストアが古い等）。
+		// SSL証明書の期限切れは、読者のブラウザでも実際にブロックされるためエラー。
+		// （ルート証明書の問題などチェック元都合のSSL検証失敗は、応答があれば何も報告しない）
 		if ( ! empty( $http['ssl_issue'] ) ) {
 			$issues[] = array(
-				'code'     => 'ssl_problem',
-				'severity' => self::SEVERITY_WARNING,
-				'message'  => 'SSL証明書を検証できませんでしたが、リンク先は応答しています（HTTP ' . $http['status'] . '）。ブラウザでは通常問題なく開けます。このサイトのサーバーのルート証明書が古い可能性があるため、サーバーのPHPバージョンを最新に更新してください',
+				'code'     => 'ssl_expired',
+				'severity' => self::SEVERITY_ERROR,
+				'message'  => 'リンク先のSSL証明書の有効期限が切れています。ほとんどのブラウザでアクセスがブロックされるため、リンク先サイトの証明書更新が必要です',
 			);
 		}
 
@@ -348,10 +348,13 @@ class LMC_Checker {
 			$response = wp_remote_get( $current, $args );
 
 			// SSL検証エラーは、チェック元サーバーのルート証明書が古いだけの場合が
-			// 多い（ブラウザでは正常）。検証なしで1回だけ再試行して生死を確かめる。
+			// 多い（ブラウザでは正常）ため、検証なしで再試行して生死を確かめる。
+			// ただし「期限切れ」は読者のブラウザも実際にブロックするため区別して記録する。
 			if ( is_wp_error( $response ) && false !== stripos( $response->get_error_message(), 'SSL certificate problem' ) ) {
-				$ssl_issue = true;
-				$response  = wp_remote_get( $current, array_merge( $args, array( 'sslverify' => false ) ) );
+				if ( false !== stripos( $response->get_error_message(), 'expired' ) ) {
+					$ssl_issue = true;
+				}
+				$response = wp_remote_get( $current, array_merge( $args, array( 'sslverify' => false ) ) );
 			}
 
 			if ( is_wp_error( $response ) ) {
