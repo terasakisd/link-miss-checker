@@ -446,9 +446,21 @@ class LMC_Checker {
 		// JS遷移ボタン（<div id="bt414"> 等）を解決してリンクとして追加。
 		$button_issues = array();
 		if ( LMC_Settings::get( 'detect_js_links' ) ) {
-			$map = LMC_JS_Links::get_map( $content, (int) $options['post_id'] );
+			$map      = LMC_JS_Links::get_map( $content, (int) $options['post_id'] );
+			$rendered = null; // 公開ページから取得した対応表（未解決のbtがある場合のみ遅延取得）
 
 			foreach ( $extracted['buttons'] as $button ) {
+				// 本文・カスタムJS欄・テーマJSで見つからなければ、
+				// 最後に公開ページのHTML（wp_footer等の出力）からも探す。
+				if ( ! isset( $map[ $button['id'] ] ) && self::is_js_button( $button ) ) {
+					if ( null === $rendered ) {
+						$rendered = LMC_JS_Links::rendered_map( (int) $options['post_id'] );
+					}
+					if ( isset( $rendered[ $button['id'] ] ) ) {
+						$map[ $button['id'] ] = $rendered[ $button['id'] ];
+					}
+				}
+
 				if ( isset( $map[ $button['id'] ] ) ) {
 					$links[] = array(
 						'url'           => $map[ $button['id'] ],
@@ -457,7 +469,7 @@ class LMC_Checker {
 						'is_image_link' => false,
 					);
 				} elseif ( self::is_js_button( $button ) ) {
-					// JSリンクのidなのに遷移先が見つからない＝リンクが飛ばない状態。
+					// どこを探しても遷移先が見つからない＝リンクが飛ばない状態。
 					$button_issues[] = array(
 						'url'         => '#' . $button['id'],
 						'anchor_text' => $button['text'],
@@ -465,7 +477,7 @@ class LMC_Checker {
 						'problems'    => array( array(
 							'code'     => 'js_unresolved',
 							'severity' => self::SEVERITY_ERROR,
-							'message'  => 'JSリンク（id=' . $button['id'] . '）の遷移先URLが見つかりません。記事内のscriptやテーマのJS（access.js等）から定義が消えていないか確認してください',
+							'message'  => 'JSリンク（id=' . $button['id'] . '）の遷移先URLが見つかりません。記事内のscript・カスタムJS欄・テーマのJS（access.js等）・公開ページの出力を確認しましたが定義がありません',
 						) ),
 					);
 				}
