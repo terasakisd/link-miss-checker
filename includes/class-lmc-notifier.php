@@ -119,6 +119,8 @@ class LMC_Notifier {
 				return 'トップページへ転送（削除の可能性）';
 			case 'http_blocked':
 				return 'アクセス拒否（bot対策の可能性）';
+			case 'ssl_problem':
+				return 'SSL証明書の警告（リンク自体は応答あり）';
 			case 'js_unresolved':
 				return 'JSリンクの遷移先なし';
 		}

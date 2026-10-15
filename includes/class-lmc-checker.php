@@ -245,6 +245,16 @@ class LMC_Checker {
 			return $issues;
 		}
 
+		// SSL検証は失敗したが、検証なしの再試行では応答があった場合。
+		// ブラウザでは正常に開けることが多い（チェック元サーバーの証明書ストアが古い等）。
+		if ( ! empty( $http['ssl_issue'] ) ) {
+			$issues[] = array(
+				'code'     => 'ssl_problem',
+				'severity' => self::SEVERITY_WARNING,
+				'message'  => 'SSL証明書を検証できませんでしたが、リンク先は応答しています（HTTP ' . $http['status'] . '）。ブラウザでは通常問題なく開けます（チェック元サーバーのルート証明書が古い可能性）',
+			);
+		}
+
 		// 403/429はbot対策で弾かれているだけの可能性が高い。
 		if ( in_array( $http['status'], array( 403, 429 ), true ) ) {
 			// リダイレクトやクッションページを1ホップ以上通過した末の403なら、
@@ -325,6 +335,7 @@ class LMC_Checker {
 		$status     = 0;
 		$body       = '';
 		$error      = '';
+		$ssl_issue  = false;
 		$visited    = array();
 
 		// HTTPリダイレクトに加え、クッションページ（meta refresh / JS遷移）も追跡する。
@@ -335,6 +346,13 @@ class LMC_Checker {
 			$visited[ $current ] = true;
 
 			$response = wp_remote_get( $current, $args );
+
+			// SSL検証エラーは、チェック元サーバーのルート証明書が古いだけの場合が
+			// 多い（ブラウザでは正常）。検証なしで1回だけ再試行して生死を確かめる。
+			if ( is_wp_error( $response ) && false !== stripos( $response->get_error_message(), 'SSL certificate problem' ) ) {
+				$ssl_issue = true;
+				$response  = wp_remote_get( $current, array_merge( $args, array( 'sslverify' => false ) ) );
+			}
 
 			if ( is_wp_error( $response ) ) {
 				$error = $response->get_error_message();
@@ -374,6 +392,7 @@ class LMC_Checker {
 			'redirected' => $redirected,
 			'body'       => mb_substr( (string) $body, 0, 100000 ),
 			'error'      => $error,
+			'ssl_issue'  => $ssl_issue,
 		);
 
 		self::$http_cache[ $url ] = $result;
