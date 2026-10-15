@@ -60,7 +60,7 @@ class LMC_Rest {
 			@set_time_limit( 120 );
 		}
 
-		$result = LMC_Checker::check_content( $content );
+		$result = LMC_Checker::check_content( $content, array( 'post_id' => $post_id ) );
 
 		$has_error = false;
 		foreach ( $result['issues'] as $issue ) {

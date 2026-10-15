@@ -113,6 +113,7 @@ class LMC_Cron {
 
 			$result = LMC_Checker::check_content( $post->post_content, array(
 				'ad_only' => $ad_only,
+				'post_id' => $post_id,
 			) );
 
 			foreach ( $result['issues'] as $issue ) {

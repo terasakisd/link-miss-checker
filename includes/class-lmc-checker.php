@@ -435,7 +435,10 @@ class LMC_Checker {
 	 * @return array{links: int, issues: array[]} issuesの各要素: url, anchor_text, heading, problems[]
 	 */
 	public static function check_content( $content, $options = array() ) {
-		$options = wp_parse_args( $options, array( 'ad_only' => false ) );
+		$options = wp_parse_args( $options, array(
+			'ad_only' => false,
+			'post_id' => 0,
+		) );
 
 		$extracted = LMC_Extractor::extract_all( $content );
 		$links     = $extracted['links'];
@@ -443,7 +446,7 @@ class LMC_Checker {
 		// JS遷移ボタン（<div id="bt414"> 等）を解決してリンクとして追加。
 		$button_issues = array();
 		if ( LMC_Settings::get( 'detect_js_links' ) ) {
-			$map = LMC_JS_Links::get_map( $content );
+			$map = LMC_JS_Links::get_map( $content, (int) $options['post_id'] );
 
 			foreach ( $extracted['buttons'] as $button ) {
 				if ( isset( $map[ $button['id'] ] ) ) {

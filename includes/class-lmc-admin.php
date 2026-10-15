@@ -212,7 +212,7 @@ class LMC_Admin {
 					<?php endforeach; ?>
 				</tbody>
 			</table>
-			<p class="description" style="margin-top:10px;">記事本文内の &lt;script&gt; で定義されたJSリンクはこの表には含まれません（各記事のチェック時に個別に解決されます）。</p>
+			<p class="description" style="margin-top:10px;">記事本文内の &lt;script&gt; や記事ごとのカスタムJS欄で定義されたJSリンクはこの表には含まれません（各記事のチェック時に個別に解決されます）。</p>
 		<?php endif; ?>
 		<?php
 	}

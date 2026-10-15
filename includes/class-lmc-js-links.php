@@ -22,17 +22,60 @@ class LMC_JS_Links {
 	const TRANSIENT_KEY = 'lmc_js_map';
 
 	/**
-	 * id => URL の対応表を取得（テーマJS + 記事内script）。
-	 * 記事内の定義を優先する。
+	 * id => URL の対応表を取得（テーマJS + 記事のカスタムJS欄 + 記事内script）。
+	 * 記事に近い定義ほど優先する（記事内script > カスタムJS欄 > テーマJS）。
 	 *
 	 * @param string $content 記事本文HTML。
+	 * @param int    $post_id 投稿ID（カスタムフィールドのJS欄を探索する場合）。
 	 * @return array<string,string>
 	 */
-	public static function get_map( $content = '' ) {
+	public static function get_map( $content = '', $post_id = 0 ) {
 		$map = self::theme_map();
+		foreach ( self::meta_map( $post_id ) as $id => $url ) {
+			$map[ $id ] = $url;
+		}
 		foreach ( self::content_map( $content ) as $id => $url ) {
 			$map[ $id ] = $url;
 		}
+		return $map;
+	}
+
+	/**
+	 * 記事のカスタムフィールドからJSリンク定義を抽出。
+	 * 「カスタムCSS & JS」のようなメタボックスでJSを保存しているテーマ/プラグイン対応。
+	 * メタキー名はサイトごとに異なるため、キーを決め打ちせず
+	 * JSらしい内容（getElementById等）を含む値をすべて解析する。
+	 *
+	 * @param int $post_id 投稿ID。
+	 * @return array<string,string>
+	 */
+	public static function meta_map( $post_id ) {
+		$post_id = (int) $post_id;
+		if ( ! $post_id ) {
+			return array();
+		}
+
+		$map = array();
+		foreach ( (array) get_post_meta( $post_id ) as $values ) {
+			foreach ( (array) $values as $value ) {
+				if ( ! is_string( $value ) || '' === $value ) {
+					continue;
+				}
+				// JSらしい値だけを対象にする（無関係なメタの誤解析を防ぐ）。
+				if ( false === strpos( $value, 'getElementById' )
+					&& false === strpos( $value, 'location.href' )
+					&& false === strpos( $value, 'window.open' )
+					&& ! preg_match( '/[\'"]#[A-Za-z]/', $value ) ) {
+					continue;
+				}
+				foreach ( self::parse_js( $value ) as $id => $url ) {
+					if ( ! isset( $map[ $id ] ) ) {
+						$map[ $id ] = $url;
+					}
+				}
+			}
+		}
+
 		return $map;
 	}
 
