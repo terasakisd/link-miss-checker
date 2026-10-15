@@ -22,16 +22,16 @@ class LMC_JS_Links {
 	const TRANSIENT_KEY = 'lmc_js_map';
 
 	/**
-	 * id => URL の対応表を取得（テーマJS + 記事のカスタムJS欄 + 記事内script）。
-	 * 記事に近い定義ほど優先する（記事内script > カスタムJS欄 > テーマJS）。
+	 * id => URL の対応表を取得。
+	 * 優先順位: 記事内script > 公開ページの実出力（取得不能時はカスタムJS欄） > テーマJS。
 	 *
 	 * @param string $content 記事本文HTML。
-	 * @param int    $post_id 投稿ID（カスタムフィールドのJS欄を探索する場合）。
+	 * @param int    $post_id 投稿ID（0なら記事固有の探索は行わない）。
 	 * @return array<string,string>
 	 */
 	public static function get_map( $content = '', $post_id = 0 ) {
 		$map = self::theme_map();
-		foreach ( self::meta_map( $post_id ) as $id => $url ) {
+		foreach ( self::page_map( $post_id ) as $id => $url ) {
 			$map[ $id ] = $url;
 		}
 		foreach ( self::content_map( $content ) as $id => $url ) {
@@ -41,32 +41,44 @@ class LMC_JS_Links {
 	}
 
 	/**
-	 * 公開ページのHTMLを取得し、wp_footer等で出力されたインラインJSから定義を抽出。
-	 * カスタムフィールド以外の場所（独自テーブル・設定等）に保存して
-	 * フッターへ出力するテーマ/プラグインへの最終フォールバック。
+	 * 公開ページの実際のHTML（wp_footer出力後の最終形）からJSリンク定義を抽出。
 	 *
-	 * @param int $post_id 投稿ID（公開済みのみ）。
+	 * カスタムJS欄の「wp_footerで出力されます」という表記は当てにせず、
+	 * 実際にページへ出力されているかどうかで判定する。出力処理が壊れていて
+	 * 定義がページに現れない場合は、未解決＝エラーとして検出される。
+	 *
+	 * ページを取得できない場合（未公開・自己リクエスト不可の環境など）のみ、
+	 * カスタムフィールドの保存値にフォールバックする。
+	 *
+	 * @param int $post_id 投稿ID。
 	 * @return array<string,string>
 	 */
-	public static function rendered_map( $post_id ) {
+	public static function page_map( $post_id ) {
 		$post_id = (int) $post_id;
-		if ( ! $post_id || 'publish' !== get_post_status( $post_id ) ) {
+		if ( ! $post_id ) {
 			return array();
 		}
+
+		// 未公開記事はページ取得ができないため保存値で判定。
+		if ( 'publish' !== get_post_status( $post_id ) ) {
+			return self::meta_map( $post_id );
+		}
+
 		$url = get_permalink( $post_id );
 		if ( ! $url ) {
-			return array();
+			return self::meta_map( $post_id );
 		}
 
 		$response = wp_remote_get( $url, array(
-			'timeout'    => (int) LMC_Settings::get( 'timeout' ),
-			'user-agent' => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+			'timeout'     => (int) LMC_Settings::get( 'timeout' ),
+			'redirection' => 3,
+			'user-agent'  => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 		) );
 		if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
-			return array();
+			return self::meta_map( $post_id );
 		}
 
-		// ページ内の全インライン<script>（ヘッダー・フッター出力分を含む）を解析。
+		// 取得に成功したら、実際に出力されているscriptだけを信頼する。
 		return self::content_map( (string) wp_remote_retrieve_body( $response ) );
 	}
 

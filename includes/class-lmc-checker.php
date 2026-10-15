@@ -445,22 +445,19 @@ class LMC_Checker {
 
 		// JS遷移ボタン（<div id="bt414"> 等）を解決してリンクとして追加。
 		$button_issues = array();
-		if ( LMC_Settings::get( 'detect_js_links' ) ) {
-			$map      = LMC_JS_Links::get_map( $content, (int) $options['post_id'] );
-			$rendered = null; // 公開ページから取得した対応表（未解決のbtがある場合のみ遅延取得）
+		if ( LMC_Settings::get( 'detect_js_links' ) && $extracted['buttons'] ) {
+			// JSリンクらしいid（bt等）を含む記事だけ、公開ページの実出力を取得して検証する。
+			$needs_page = false;
+			foreach ( $extracted['buttons'] as $button ) {
+				if ( self::is_js_button( $button ) ) {
+					$needs_page = true;
+					break;
+				}
+			}
+
+			$map = LMC_JS_Links::get_map( $content, $needs_page ? (int) $options['post_id'] : 0 );
 
 			foreach ( $extracted['buttons'] as $button ) {
-				// 本文・カスタムJS欄・テーマJSで見つからなければ、
-				// 最後に公開ページのHTML（wp_footer等の出力）からも探す。
-				if ( ! isset( $map[ $button['id'] ] ) && self::is_js_button( $button ) ) {
-					if ( null === $rendered ) {
-						$rendered = LMC_JS_Links::rendered_map( (int) $options['post_id'] );
-					}
-					if ( isset( $rendered[ $button['id'] ] ) ) {
-						$map[ $button['id'] ] = $rendered[ $button['id'] ];
-					}
-				}
-
 				if ( isset( $map[ $button['id'] ] ) ) {
 					$links[] = array(
 						'url'           => $map[ $button['id'] ],
