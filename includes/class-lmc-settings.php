@@ -24,6 +24,7 @@ class LMC_Settings {
 			'timeout'              => 10,
 			'block_on_error'       => 1,
 			'exclude_patterns'     => '',
+			'browser_check_patterns' => '',
 			'detect_js_links'      => 1,
 			'js_button_id_prefix'  => 'bt',
 			'scan_post_types'      => array( 'post', 'page' ),
@@ -53,6 +54,17 @@ class LMC_Settings {
 	 */
 	public static function exclude_patterns() {
 		$raw = (string) self::get( 'exclude_patterns' );
+		$patterns = array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', $raw ) ) );
+		return array_values( array_unique( $patterns ) );
+	}
+
+
+	/**
+	 * ブラウザ検証パターンを配列で取得。
+	 * （bot対策でサーバーから判定できないドメイン。Macの実ブラウザが週次で死活確認する）
+	 */
+	public static function browser_check_patterns() {
+		$raw = (string) self::get( 'browser_check_patterns' );
 		$patterns = array_filter( array_map( 'trim', preg_split( '/[\r\n]+/', $raw ) ) );
 		return array_values( array_unique( $patterns ) );
 	}
@@ -122,6 +134,7 @@ class LMC_Settings {
 		$out['timeout']         = max( 3, min( 30, (int) ( $input['timeout'] ?? 10 ) ) );
 		$out['block_on_error']  = empty( $input['block_on_error'] ) ? 0 : 1;
 		$out['exclude_patterns'] = sanitize_textarea_field( $input['exclude_patterns'] ?? '' );
+		$out['browser_check_patterns'] = sanitize_textarea_field( $input['browser_check_patterns'] ?? '' );
 		$out['detect_js_links'] = empty( $input['detect_js_links'] ) ? 0 : 1;
 		$out['js_button_id_prefix'] = sanitize_text_field( $input['js_button_id_prefix'] ?? 'bt' );
 
@@ -172,6 +185,11 @@ class LMC_Settings {
 						<div class="lmc-field">
 							<span class="lmc-field-label">タイムアウト</span>
 							<span><input type="number" min="3" max="30" name="<?php echo esc_attr( $k ); ?>[timeout]" value="<?php echo esc_attr( $s['timeout'] ); ?>" class="lmc-num"> 秒</span>
+						</div>
+						<div class="lmc-field lmc-field-block">
+							<span class="lmc-field-label">ブラウザ検証リスト</span>
+							<textarea name="<?php echo esc_attr( $k ); ?>[browser_check_patterns]" rows="3" placeholder="example.com"><?php echo esc_textarea( $s['browser_check_patterns'] ); ?></textarea>
+							<span class="lmc-hint">bot対策でサーバーから判定できないドメイン。アクセス系チェックはスキップし、Macの実ブラウザが毎週月曜に死活確認します。エラー画面の「アクセスできるのにエラーになる」ボタンからも追加されます</span>
 						</div>
 						<div class="lmc-field lmc-field-block">
 							<span class="lmc-field-label">除外リスト</span>

@@ -557,9 +557,36 @@ class LMC_Checker {
 			$links = LMC_Extractor::filter_ad_links( $links, LMC_Settings::ad_domains() );
 		}
 
+		// ブラウザ検証リストに一致するリンクは、アクセス系チェックをスキップして
+		// URLを記録し、Macの実ブラウザによる週次死活確認に回す（静的チェックは実施）。
+		$browser_patterns = LMC_Settings::browser_check_patterns();
+		$browser_links    = array();
+		if ( $browser_patterns ) {
+			foreach ( $links as $i => $link ) {
+				if ( LMC_Extractor::matches_patterns( $link['url'], $browser_patterns ) ) {
+					$browser_links[] = $link;
+					unset( $links[ $i ] );
+				}
+			}
+			$links = array_values( $links );
+		}
+
 		// 同一URLは1回だけ検査（結果は各出現箇所に反映）。
 		$results = array();
 		$checked = array();
+
+		foreach ( $browser_links as $link ) {
+			$problems = self::check_link( $link, array_merge( $options, array( 'check_http' => false ) ) );
+			if ( $problems ) {
+				$results[] = array(
+					'url'         => $link['url'],
+					'anchor_text' => $link['anchor_text'],
+					'heading'     => $link['heading'],
+					'problems'    => $problems,
+				);
+			}
+			self::record_browser_target( $link['url'], (int) $options['post_id'] );
+		}
 
 		foreach ( $links as $link ) {
 			$cache_key = $link['url'] . '|' . $link['heading'];
@@ -585,9 +612,38 @@ class LMC_Checker {
 		$results = array_merge( $results, $button_issues );
 
 		return array(
-			'links'  => count( $links ) + count( $button_issues ),
+			'links'  => count( $links ) + count( $browser_links ) + count( $button_issues ),
 			'issues' => $results,
 		);
+	}
+
+	/**
+	 * ブラウザ検証対象のURLを記録する（Mac側の週次死活確認が取得する）。
+	 *
+	 * @param string $url     対象URL。
+	 * @param int    $post_id 掲載記事ID。
+	 */
+	public static function record_browser_target( $url, $post_id ) {
+		$targets = get_option( 'lmc_browser_targets', array() );
+		if ( ! is_array( $targets ) ) {
+			$targets = array();
+		}
+
+		$targets[ $url ] = array(
+			'post_id'    => $post_id,
+			'post_title' => $post_id ? get_the_title( $post_id ) : '',
+			'seen'       => time(),
+		);
+
+		// 肥大化防止: 古いものから落として最大500件。
+		if ( count( $targets ) > 500 ) {
+			uasort( $targets, function ( $a, $b ) {
+				return ( $a['seen'] ?? 0 ) <=> ( $b['seen'] ?? 0 );
+			} );
+			$targets = array_slice( $targets, count( $targets ) - 500, null, true );
+		}
+
+		update_option( 'lmc_browser_targets', $targets, false );
 	}
 
 	/**

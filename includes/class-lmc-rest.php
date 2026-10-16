@@ -17,6 +17,8 @@ class LMC_Rest {
 		add_action( 'rest_api_init', array( __CLASS__, 'register_routes' ) );
 		// REST APIがWAF等でブロックされるサイト向けのフォールバック経路。
 		add_action( 'wp_ajax_lmc_check', array( __CLASS__, 'handle_ajax_check' ) );
+		// 「アクセスできるのにエラーになる」ボタン: ドメインをブラウザ検証リストへ登録。
+		add_action( 'wp_ajax_lmc_false_error', array( __CLASS__, 'handle_false_error' ) );
 	}
 
 	/**
@@ -39,6 +41,14 @@ class LMC_Rest {
 	}
 
 	public static function register_routes() {
+		// ブラウザ検証対象URLの一覧（Mac側の週次死活確認が取得する。
+		// URLは公開記事に載っているものなので公開可）。
+		register_rest_route( 'lmc/v1', '/browser-targets', array(
+			'methods'             => 'GET',
+			'permission_callback' => '__return_true',
+			'callback'            => array( __CLASS__, 'handle_browser_targets' ),
+		) );
+
 		register_rest_route( 'lmc/v1', '/check', array(
 			'methods'             => 'POST',
 			'callback'            => array( __CLASS__, 'handle_check' ),
@@ -57,6 +67,56 @@ class LMC_Rest {
 					'default'  => '',
 				),
 			),
+		) );
+	}
+
+	/**
+	 * 「アクセスできるのにエラーになる」の報告を受けて、
+	 * ドメインをブラウザ検証リストに登録し、URLを週次死活確認の対象として記録する。
+	 */
+	public static function handle_false_error() {
+		check_ajax_referer( 'lmc_false_error', 'nonce' );
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json( array( 'error' => '権限がありません' ), 403 );
+		}
+
+		$url     = esc_url_raw( wp_unslash( $_POST['url'] ?? '' ) );
+		$post_id = isset( $_POST['post_id'] ) ? (int) $_POST['post_id'] : 0;
+		$host    = (string) wp_parse_url( $url, PHP_URL_HOST );
+		if ( '' === $host ) {
+			wp_send_json( array( 'error' => 'URLが不正です' ), 400 );
+		}
+
+		$patterns = LMC_Settings::browser_check_patterns();
+		if ( ! in_array( $host, $patterns, true ) ) {
+			$settings = get_option( LMC_Settings::OPTION_KEY, array() );
+			$current  = trim( (string) ( $settings['browser_check_patterns'] ?? '' ) );
+			$settings['browser_check_patterns'] = trim( $current . "\n" . $host );
+			update_option( LMC_Settings::OPTION_KEY, $settings );
+		}
+
+		LMC_Checker::record_browser_target( $url, $post_id );
+
+		wp_send_json( array( 'ok' => true, 'host' => $host ) );
+	}
+
+	/**
+	 * ブラウザ検証対象URLの一覧を返す。
+	 */
+	public static function handle_browser_targets() {
+		$targets = get_option( 'lmc_browser_targets', array() );
+		$list    = array();
+		if ( is_array( $targets ) ) {
+			foreach ( $targets as $url => $info ) {
+				$list[] = array(
+					'url'        => $url,
+					'post_title' => (string) ( $info['post_title'] ?? '' ),
+				);
+			}
+		}
+		return rest_ensure_response( array(
+			'site'    => get_bloginfo( 'name' ),
+			'targets' => $list,
 		) );
 	}
 

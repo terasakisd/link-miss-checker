@@ -16,6 +16,7 @@ class LMC_Admin {
 		add_action( 'admin_post_lmc_test_notify', array( __CLASS__, 'handle_test_notify' ) );
 		add_action( 'admin_post_lmc_refresh_jsmap', array( __CLASS__, 'handle_refresh_jsmap' ) );
 		add_action( 'admin_post_lmc_exclude', array( __CLASS__, 'handle_exclude' ) );
+		add_action( 'admin_post_lmc_false_error', array( __CLASS__, 'handle_false_error_admin' ) );
 	}
 
 	public static function add_menu() {
@@ -62,6 +63,7 @@ class LMC_Admin {
 			'nonce'        => wp_create_nonce( 'wp_rest' ),
 			'ajaxUrl'      => esc_url_raw( admin_url( 'admin-ajax.php' ) ),
 			'ajaxNonce'    => wp_create_nonce( 'lmc_check' ),
+			'falseErrorNonce' => wp_create_nonce( 'lmc_false_error' ),
 			'postId'       => (int) get_the_ID(),
 			'blockOnError' => (bool) LMC_Settings::get( 'block_on_error' ),
 		) );
@@ -93,6 +95,10 @@ class LMC_Admin {
 				<?php self::render_jsmap_tab( $notice ); ?>
 				</div>
 				<?php return; ?>
+			<?php endif; ?>
+
+			<?php if ( 'false_error' === $notice ) : ?>
+				<div class="notice notice-success is-dismissible"><p><code><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['lmc_host'] ?? '' ) ) ); ?></code> をブラウザ検証リストに登録しました。以後サーバーからのチェックは行わず、毎週月曜にMacの実ブラウザが死活確認し、本当に切れていた場合だけChatworkに通知します。</p></div>
 			<?php endif; ?>
 
 			<?php if ( 'excluded' === $notice ) : ?>
@@ -160,7 +166,9 @@ class LMC_Admin {
 											<?php echo esc_html( mb_strimwidth( $issue['url'], 0, 80, '…' ) ); ?>
 										</a>
 										<?php if ( current_user_can( 'manage_options' ) && wp_parse_url( $issue['url'], PHP_URL_HOST ) ) : ?>
-											<br><a style="font-size:11px; color:#8c8f94;" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=lmc_exclude&url=' . rawurlencode( $issue['url'] ) ), 'lmc_exclude' ) ); ?>" onclick="return confirm('このドメインを今後のチェック対象から除外しますか？');">このドメインを除外</a>
+											<br><a style="font-size:11px; color:#2271b1;" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=lmc_false_error&url=' . rawurlencode( $issue['url'] ) . '&post=' . (int) $issue['post_id'] ), 'lmc_false_error_admin' ) ); ?>" onclick="return confirm('このドメインをブラウザ検証リストに登録しますか？\n以後サーバーからのチェックは行わず、毎週月曜にMacの実ブラウザが死活確認します。');">アクセスできるのにエラーになる</a>
+											<span style="color:#dcdcde;">|</span>
+											<a style="font-size:11px; color:#8c8f94;" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=lmc_exclude&url=' . rawurlencode( $issue['url'] ) ), 'lmc_exclude' ) ); ?>" onclick="return confirm('このドメインを今後のチェック対象から完全に除外しますか？');">除外</a>
 										<?php endif; ?>
 									</td>
 									<td>
@@ -225,6 +233,36 @@ class LMC_Admin {
 			<p class="description" style="margin-top:10px;">記事本文内の &lt;script&gt; や記事ごとのカスタムJS欄で定義されたJSリンクはこの表には含まれません（各記事のチェック時に個別に解決されます）。</p>
 		<?php endif; ?>
 		<?php
+	}
+
+	/**
+	 * スキャン結果からの「アクセスできるのにエラーになる」報告。
+	 */
+	public static function handle_false_error_admin() {
+		if ( ! current_user_can( 'edit_posts' ) || ! check_admin_referer( 'lmc_false_error_admin' ) ) {
+			wp_die( '権限がありません' );
+		}
+
+		$url     = esc_url_raw( wp_unslash( $_GET['url'] ?? '' ) );
+		$post_id = isset( $_GET['post'] ) ? (int) $_GET['post'] : 0;
+		$host    = (string) wp_parse_url( $url, PHP_URL_HOST );
+		if ( '' === $host ) {
+			wp_safe_redirect( admin_url( 'tools.php?page=lmc-results' ) );
+			exit;
+		}
+
+		$patterns = LMC_Settings::browser_check_patterns();
+		if ( ! in_array( $host, $patterns, true ) ) {
+			$settings = get_option( LMC_Settings::OPTION_KEY, array() );
+			$current  = trim( (string) ( $settings['browser_check_patterns'] ?? '' ) );
+			$settings['browser_check_patterns'] = trim( $current . "\n" . $host );
+			update_option( LMC_Settings::OPTION_KEY, $settings );
+		}
+
+		LMC_Checker::record_browser_target( $url, $post_id );
+
+		wp_safe_redirect( admin_url( 'tools.php?page=lmc-results&lmc_notice=false_error&lmc_host=' . rawurlencode( $host ) ) );
+		exit;
 	}
 
 	/**

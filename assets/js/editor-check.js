@@ -94,6 +94,11 @@
 					escapeHtml( p.message ) + '</li>';
 			} ).join( '' );
 
+			// アクセス系エラー（bot対策の偽エラーの可能性があるもの）には報告ボタンを付ける。
+			var hasAccessError = issue.problems.some( function ( p ) {
+				return 'http_error' === p.code;
+			} );
+
 			return '<div class="lmc-issue ' + ( isError ? 'lmc-sev-error' : 'lmc-sev-warning' ) + '">' +
 				'<div class="lmc-issue-top">' +
 				'<span class="lmc-badge ' + ( isError ? 'lmc-badge-error' : 'lmc-badge-warning' ) + '">' +
@@ -103,6 +108,7 @@
 				'</div>' +
 				( issue.anchor_text ? '<div class="lmc-issue-anchor">リンクテキスト: ' + escapeHtml( issue.anchor_text ) + '</div>' : '' ) +
 				'<ul class="lmc-problems">' + problems + '</ul>' +
+				( hasAccessError ? '<button type="button" class="lmc-false-error" data-url="' + escapeHtml( issue.url ) + '">アクセスできるのにエラーになる</button>' : '' ) +
 				'</div>';
 		} ).join( '' );
 
@@ -181,6 +187,37 @@
 		if ( xBtn ) {
 			xBtn.addEventListener( 'click', close );
 		}
+
+		// 「アクセスできるのにエラーになる」: ドメインをブラウザ検証リストへ登録して再チェック。
+		overlay.querySelectorAll( '.lmc-false-error' ).forEach( function ( btn ) {
+			btn.addEventListener( 'click', function () {
+				btn.disabled = true;
+				btn.textContent = '登録中…';
+
+				var form = new FormData();
+				form.append( 'action', 'lmc_false_error' );
+				form.append( 'nonce', lmcConfig.falseErrorNonce );
+				form.append( 'url', btn.getAttribute( 'data-url' ) );
+				form.append( 'post_id', lmcConfig.postId );
+
+				fetch( lmcConfig.ajaxUrl, { method: 'POST', credentials: 'same-origin', body: form } )
+					.then( function ( res ) { return res.json(); } )
+					.then( function ( data ) {
+						if ( ! data.ok ) {
+							throw new Error( data.error || '登録に失敗しました' );
+						}
+						btn.textContent = '✓ 登録しました。再チェックします…';
+						setTimeout( function () {
+							removeOverlay();
+							runCheck( retryButton );
+						}, 800 );
+					} )
+					.catch( function () {
+						btn.disabled = false;
+						btn.textContent = '登録に失敗しました（もう一度押してください）';
+					} );
+			} );
+		} );
 
 		var forceBtn   = document.getElementById( 'lmc-force' );
 		var forceCheck = document.getElementById( 'lmc-force-check' );
