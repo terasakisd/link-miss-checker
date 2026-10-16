@@ -38,6 +38,12 @@ class LMC_Extractor {
 		// ショートコードは展開してから解析（カエレバ等のリンク系ショートコード対策）。
 		$html = do_shortcode( $html );
 
+		// <script>内（JSON-LD等）の文字列をリンクとして誤抽出しないよう、
+		// 抽出用のHTMLからはscriptブロックを完全に除去する。
+		// （JSリンク定義の解析はLMC_JS_Links::content_mapが元の本文から別途行う）
+		$html = preg_replace( '#<script\b[^>]*>.*?</script>#is', '', $html );
+		$html = preg_replace( '#<script\b[^>]*>.*$#is', '', $html ); // 閉じ忘れ対策
+
 		$doc = new DOMDocument();
 		libxml_use_internal_errors( true );
 		$doc->loadHTML(

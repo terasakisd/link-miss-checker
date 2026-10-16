@@ -15,6 +15,7 @@ class LMC_Admin {
 		add_action( 'admin_post_lmc_manual_scan', array( __CLASS__, 'handle_manual_scan' ) );
 		add_action( 'admin_post_lmc_test_notify', array( __CLASS__, 'handle_test_notify' ) );
 		add_action( 'admin_post_lmc_refresh_jsmap', array( __CLASS__, 'handle_refresh_jsmap' ) );
+		add_action( 'admin_post_lmc_exclude', array( __CLASS__, 'handle_exclude' ) );
 	}
 
 	public static function add_menu() {
@@ -94,6 +95,10 @@ class LMC_Admin {
 				<?php return; ?>
 			<?php endif; ?>
 
+			<?php if ( 'excluded' === $notice ) : ?>
+				<div class="notice notice-success is-dismissible"><p><code><?php echo esc_html( sanitize_text_field( wp_unslash( $_GET['lmc_host'] ?? '' ) ) ); ?></code> を除外リストに追加しました。次回のチェック・巡回から対象外になります（<a href="<?php echo esc_url( admin_url( 'options-general.php?page=lmc-settings' ) ); ?>">設定で確認</a>）。</p></div>
+			<?php endif; ?>
+
 			<?php if ( 'scan_started' === $notice ) : ?>
 				<div class="notice notice-info is-dismissible"><p>スキャンを開始しました。バックグラウンドで順次処理されます（数分かかる場合があります）。</p></div>
 			<?php elseif ( 'test_sent' === $notice ) : ?>
@@ -154,6 +159,9 @@ class LMC_Admin {
 										<a href="<?php echo esc_url( $issue['url'] ); ?>" target="_blank" rel="noopener noreferrer">
 											<?php echo esc_html( mb_strimwidth( $issue['url'], 0, 80, '…' ) ); ?>
 										</a>
+										<?php if ( current_user_can( 'manage_options' ) && wp_parse_url( $issue['url'], PHP_URL_HOST ) ) : ?>
+											<br><a style="font-size:11px; color:#8c8f94;" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=lmc_exclude&url=' . rawurlencode( $issue['url'] ) ), 'lmc_exclude' ) ); ?>" onclick="return confirm('このドメインを今後のチェック対象から除外しますか？');">このドメインを除外</a>
+										<?php endif; ?>
 									</td>
 									<td>
 										<?php foreach ( $issue['problems'] as $problem ) : ?>
@@ -217,6 +225,33 @@ class LMC_Admin {
 			<p class="description" style="margin-top:10px;">記事本文内の &lt;script&gt; や記事ごとのカスタムJS欄で定義されたJSリンクはこの表には含まれません（各記事のチェック時に個別に解決されます）。</p>
 		<?php endif; ?>
 		<?php
+	}
+
+	/**
+	 * スキャン結果からのワンクリック除外（ドメインを除外リストへ追加）。
+	 */
+	public static function handle_exclude() {
+		if ( ! current_user_can( 'manage_options' ) || ! check_admin_referer( 'lmc_exclude' ) ) {
+			wp_die( '権限がありません' );
+		}
+
+		$url  = esc_url_raw( wp_unslash( $_GET['url'] ?? '' ) );
+		$host = (string) wp_parse_url( $url, PHP_URL_HOST );
+		if ( '' === $host ) {
+			wp_safe_redirect( admin_url( 'tools.php?page=lmc-results' ) );
+			exit;
+		}
+
+		$patterns = LMC_Settings::exclude_patterns();
+		if ( ! in_array( $host, $patterns, true ) ) {
+			$settings = get_option( LMC_Settings::OPTION_KEY, array() );
+			$current  = trim( (string) ( $settings['exclude_patterns'] ?? LMC_Settings::get( 'exclude_patterns' ) ) );
+			$settings['exclude_patterns'] = trim( $current . "\n" . $host );
+			update_option( LMC_Settings::OPTION_KEY, $settings );
+		}
+
+		wp_safe_redirect( admin_url( 'tools.php?page=lmc-results&lmc_notice=excluded&lmc_host=' . rawurlencode( $host ) ) );
+		exit;
 	}
 
 	/**
