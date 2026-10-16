@@ -264,12 +264,34 @@
 
 	/* ---------- チェック実行 ---------- */
 
+	// admin-ajax.php 経由のチェック（REST APIがWAF等でブロックされるサイト用）
+	function runCheckViaAjax( content ) {
+		var form = new FormData();
+		form.append( 'action', 'lmc_check' );
+		form.append( 'nonce', lmcConfig.ajaxNonce );
+		form.append( 'post_id', lmcConfig.postId );
+		form.append( 'content', content );
+
+		return fetch( lmcConfig.ajaxUrl, {
+			method: 'POST',
+			credentials: 'same-origin',
+			body: form
+		} ).then( function ( res ) {
+			if ( ! res.ok ) {
+				throw new Error( 'サーバーエラー（HTTP ' + res.status + '）' );
+			}
+			return res.json();
+		} );
+	}
+
 	function runCheck( retryButton ) {
 		if ( checking ) {
 			return;
 		}
 		checking = true;
 		showSpinner();
+
+		var content = getContent();
 
 		fetch( lmcConfig.restUrl, {
 			method: 'POST',
@@ -280,11 +302,15 @@
 			credentials: 'same-origin',
 			body: JSON.stringify( {
 				post_id: lmcConfig.postId,
-				content: getContent()
+				content: content
 			} )
 		} )
 			.then( function ( res ) {
 				if ( ! res.ok ) {
+					// RESTがセキュリティ設定でブロックされている場合はadmin-ajaxで再試行。
+					if ( 401 === res.status || 403 === res.status ) {
+						return runCheckViaAjax( content );
+					}
 					throw new Error( 'サーバーエラー（HTTP ' + res.status + '）' );
 				}
 				return res.json();

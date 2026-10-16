@@ -3,7 +3,7 @@
  * Plugin Name: リンクミス発見ツール
  * Plugin URI:  https://github.com/terasakisd/link-miss-checker
  * Description: 記事更新前にリンク切れ・末尾欠け・パラメータ重複・旧スラッグ・商品名不一致を自動チェックし、問題があれば更新を止めます。週1回の全記事巡回とチャット通知も行います。
- * Version:     1.23.0
+ * Version:     1.24.0
  * Author:      Mikuru Terasaki
  * License:     GPL-2.0-or-later
  * Text Domain: link-miss-checker
@@ -15,7 +15,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'LMC_VERSION', '1.23.0' );
+// 古いPHPでは以降のファイルが構文エラーになるため、読み込む前にバージョンを確認する。
+// ※このファイル自体はPHP5でも解析可能な構文のみで書くこと。
+if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
+	function lmc_php_version_notice() {
+		echo '<div class="notice notice-error"><p><strong>リンクミス発見ツール:</strong> 動作には PHP 7.4 以上が必要です（このサーバーは ' . esc_html( PHP_VERSION ) . '）。サーバーパネルからPHPバージョンを更新してから、プラグインを再度有効化してください。</p></div>';
+	}
+	add_action( 'admin_notices', 'lmc_php_version_notice' );
+	return;
+}
+
+define( 'LMC_VERSION', '1.24.0' );
 define( 'LMC_PLUGIN_FILE', __FILE__ );
 define( 'LMC_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'LMC_PLUGIN_URL', plugin_dir_url( __FILE__ ) );

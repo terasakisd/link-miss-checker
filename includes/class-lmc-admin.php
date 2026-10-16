@@ -59,6 +59,8 @@ class LMC_Admin {
 		wp_localize_script( 'lmc-editor-check', 'lmcConfig', array(
 			'restUrl'      => esc_url_raw( rest_url( 'lmc/v1/check' ) ),
 			'nonce'        => wp_create_nonce( 'wp_rest' ),
+			'ajaxUrl'      => esc_url_raw( admin_url( 'admin-ajax.php' ) ),
+			'ajaxNonce'    => wp_create_nonce( 'lmc_check' ),
 			'postId'       => (int) get_the_ID(),
 			'blockOnError' => (bool) LMC_Settings::get( 'block_on_error' ),
 		) );

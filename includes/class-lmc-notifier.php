@@ -111,6 +111,8 @@ class LMC_Notifier {
 				return 'URL欠けの疑い';
 			case 'invalid_url':
 				return 'URL形式が不正';
+			case 'broken_markup':
+				return 'HTML記述の破損（\\"混入）';
 			case 'old_slug':
 				return '旧スラッグ';
 			case 'internal_not_public':

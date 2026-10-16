@@ -15,6 +15,27 @@ class LMC_Rest {
 
 	public static function init() {
 		add_action( 'rest_api_init', array( __CLASS__, 'register_routes' ) );
+		// REST APIがWAF等でブロックされるサイト向けのフォールバック経路。
+		add_action( 'wp_ajax_lmc_check', array( __CLASS__, 'handle_ajax_check' ) );
+	}
+
+	/**
+	 * admin-ajax.php 経由のチェック（RESTが403等で使えないサイト用）。
+	 */
+	public static function handle_ajax_check() {
+		check_ajax_referer( 'lmc_check', 'nonce' );
+		if ( ! current_user_can( 'edit_posts' ) ) {
+			wp_send_json( array( 'error' => '権限がありません' ), 403 );
+		}
+
+		$post_id = isset( $_POST['post_id'] ) ? (int) $_POST['post_id'] : 0;
+		$content = isset( $_POST['content'] ) ? (string) wp_unslash( $_POST['content'] ) : '';
+
+		if ( $post_id && ! current_user_can( 'edit_post', $post_id ) ) {
+			wp_send_json( array( 'error' => '権限がありません' ), 403 );
+		}
+
+		wp_send_json( self::run_check( $post_id, $content ) );
 	}
 
 	public static function register_routes() {
@@ -47,6 +68,17 @@ class LMC_Rest {
 			return new WP_Error( 'lmc_forbidden', '権限がありません', array( 'status' => 403 ) );
 		}
 
+		return rest_ensure_response( self::run_check( $post_id, $content ) );
+	}
+
+	/**
+	 * チェック本体（RESTとadmin-ajaxで共通）。
+	 *
+	 * @param int    $post_id 投稿ID。
+	 * @param string $content 本文HTML（空なら保存済み本文を使用）。
+	 * @return array links / issues / has_error / checked_at
+	 */
+	public static function run_check( $post_id, $content ) {
 		// 本文が送られてこなければ保存済みの本文を使う。
 		if ( '' === $content && $post_id ) {
 			$post = get_post( $post_id );
@@ -90,6 +122,6 @@ class LMC_Rest {
 			) );
 		}
 
-		return rest_ensure_response( $response );
+		return $response;
 	}
 }

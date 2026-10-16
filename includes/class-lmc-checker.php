@@ -82,6 +82,17 @@ class LMC_Checker {
 	public static function check_format( $url ) {
 		$issues = array();
 
+		// href=\"https://...\" のように、エスケープされた引用符ごとhrefに入っているケース。
+		// （一括置換ツール等の変換ミスの典型。読者がクリックしても正しく開けない）
+		if ( preg_match( '/^[\\\\\'"]+(https?:\/\/.+?)[\\\\\'"]+$/', $url, $m ) ) {
+			$issues[] = array(
+				'code'     => 'broken_markup',
+				'severity' => self::SEVERITY_ERROR,
+				'message'  => 'リンクのHTML記述が壊れています。href の前後に余分な \\" （バックスラッシュ付き引用符）が付いているため、クリックしても正しいページが開きません。コードエディタでこのリンクを探し、バックスラッシュを削除して href="' . $m[1] . '" に直してください',
+			);
+			return $issues;
+		}
+
 		$parts = wp_parse_url( $url );
 		if ( false === $parts || empty( $parts['host'] ) || empty( $parts['scheme'] )
 			|| ! in_array( strtolower( $parts['scheme'] ), array( 'http', 'https' ), true ) ) {
@@ -262,6 +273,20 @@ class LMC_Checker {
 			return $issues;
 		}
 
+		// App StoreのWebはbotに404を返すことがあるため、公式のLookup APIで
+		// アプリが実在するかを照合してから判定する。
+		if ( 404 === (int) $http['status'] && preg_match( '#https?://(?:apps|itunes)\.apple\.com/.*?id(\d+)#', $http['final_url'], $m ) ) {
+			if ( self::app_store_exists( $m[1] ) ) {
+				return $issues; // アプリは実在。botへの404なので問題なし。
+			}
+			$issues[] = array(
+				'code'     => 'http_error',
+				'severity' => self::SEVERITY_ERROR,
+				'message'  => 'App Storeにアプリが見つかりません（配信終了・取り下げの可能性があります）',
+			);
+			return $issues;
+		}
+
 		if ( $http['status'] >= 400 ) {
 			$issues[] = array(
 				'code'     => 'http_error',
@@ -391,6 +416,32 @@ class LMC_Checker {
 
 		self::$http_cache[ $url ] = $result;
 		return $result;
+	}
+
+	/**
+	 * App StoreのアプリIDが実在するかをiTunes Lookup APIで確認（12時間キャッシュ）。
+	 *
+	 * @param string $app_id 数字のアプリID。
+	 */
+	private static function app_store_exists( $app_id ) {
+		$cache_key = 'lmc_appstore_' . $app_id;
+		$cached    = get_transient( $cache_key );
+		if ( false !== $cached ) {
+			return '1' === $cached;
+		}
+
+		$response = wp_remote_get( 'https://itunes.apple.com/lookup?id=' . rawurlencode( $app_id ) . '&country=jp', array( 'timeout' => 10 ) );
+		if ( is_wp_error( $response ) || 200 !== (int) wp_remote_retrieve_response_code( $response ) ) {
+			// 確認できない場合は「実在する」扱いにして誤エラーを避ける。
+			set_transient( $cache_key, '1', HOUR_IN_SECONDS );
+			return true;
+		}
+
+		$data   = json_decode( wp_remote_retrieve_body( $response ), true );
+		$exists = is_array( $data ) && ! empty( $data['resultCount'] );
+
+		set_transient( $cache_key, $exists ? '1' : '0', 12 * HOUR_IN_SECONDS );
+		return $exists;
 	}
 
 	/**
