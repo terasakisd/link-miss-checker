@@ -273,6 +273,14 @@ class LMC_Checker {
 			return $issues;
 		}
 
+		// Amazon等、サーバーからのアクセスに対して bogus な 4xx/5xx（503/404等）を
+		// 返す既知のbot対策サイトは報告しない（読者のブラウザでは正常に開ける）。
+		if ( $http['status'] >= 400
+			&& ( self::is_bot_wall_host( wp_parse_url( $url, PHP_URL_HOST ) )
+				|| self::is_bot_wall_host( wp_parse_url( $http['final_url'], PHP_URL_HOST ) ) ) ) {
+			return $issues;
+		}
+
 		// App StoreのWebはbotに404を返すことがあるため、公式のLookup APIで
 		// アプリが実在するかを照合してから判定する。
 		if ( 404 === (int) $http['status'] && preg_match( '#https?://(?:apps|itunes)\.apple\.com/.*?id(\d+)#', $http['final_url'], $m ) ) {
@@ -429,6 +437,27 @@ class LMC_Checker {
 
 		self::$http_cache[ $url ] = $result;
 		return $result;
+	}
+
+	/**
+	 * サーバーからのアクセスに bogus なエラーステータスを返す、既知のbot対策サイトか。
+	 * （読者のブラウザでは正常に開けるため、これらの4xx/5xxはリンク切れではない）
+	 *
+	 * @param string|null $host ホスト名。
+	 */
+	private static function is_bot_wall_host( $host ) {
+		$host = strtolower( (string) $host );
+		if ( '' === $host ) {
+			return false;
+		}
+		// Amazon各国ドメイン・短縮URL。
+		$walls = array( 'amazon.co.jp', 'amazon.com', 'amazon.jp', 'amzn.to', 'amzn.asia' );
+		foreach ( $walls as $w ) {
+			if ( $host === $w || str_ends_with( $host, '.' . $w ) || false !== strpos( $host, 'amazon.' ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
