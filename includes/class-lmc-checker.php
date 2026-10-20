@@ -287,6 +287,19 @@ class LMC_Checker {
 			return $issues;
 		}
 
+		// クッション／リダイレクトで「別ドメイン」へ移動した末の4xxは、
+		// 広告主・ASPのbot対策による拒否がほとんど（読者のブラウザでは正常に開ける）。
+		// 一方、自ドメイン内で完結する4xx（記事削除など）は従来通りエラーにする。
+		// 接続不能（ドメイン消滅・DNS切れ）は上部の error 分岐で既にエラー扱い。
+		if ( $http['status'] >= 400 && ! empty( $http['redirected'] ) ) {
+			$orig_host  = (string) wp_parse_url( $url, PHP_URL_HOST );
+			$final_host = (string) wp_parse_url( $http['final_url'], PHP_URL_HOST );
+			if ( '' !== $final_host && $final_host !== $orig_host ) {
+				// 外部ドメインの広告主/ASP endpoint に到達した末の4xx → 検証不能として報告しない。
+				return $issues;
+			}
+		}
+
 		if ( $http['status'] >= 400 ) {
 			$issues[] = array(
 				'code'     => 'http_error',
