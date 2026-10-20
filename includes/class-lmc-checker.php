@@ -23,6 +23,9 @@ class LMC_Checker {
 	/** @var array 同一リクエスト内のHTTP結果キャッシュ（URL => 結果） */
 	private static $http_cache = array();
 
+	/** @var bool 直近の並列プリフェッチが時間切れで打ち切られたか */
+	private static $prefetch_truncated = false;
+
 	/**
 	 * リンク1件を検査して問題の配列を返す。
 	 *
@@ -463,7 +466,9 @@ class LMC_Checker {
 	 *
 	 * @param string[] $urls 取得対象のURL（http/https・絶対のみ）。
 	 */
-	public static function prefetch_many( $urls ) {
+	public static function prefetch_many( $urls, $budget = 0 ) {
+		self::$prefetch_truncated = false;
+		$deadline = microtime( true ) + ( $budget > 0 ? (float) $budget : self::http_time_budget() );
 		$ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 		// http/https の絶対URLで、まだキャッシュされていないものだけ。
@@ -512,6 +517,11 @@ class LMC_Checker {
 
 		// クッション（meta refresh）を最大6ラウンドまで並列で追跡。
 		for ( $round = 0; $round < 6; $round++ ) {
+			// 時間予算を超えたら打ち切る（残りは未取得=静的チェックのみ）。
+			if ( microtime( true ) >= $deadline ) {
+				self::$prefetch_truncated = true;
+				break;
+			}
 			$batch = array();
 			foreach ( $state as $ou => $st ) {
 				if ( $st['done'] ) {
@@ -851,8 +861,10 @@ class LMC_Checker {
 
 		// リンクが多い記事でも全リンクをチェックできるよう、HTTPアクセスを並列で
 		// まとめて先に取得してキャッシュを温める（逐次だと504になる記事の対策）。
+		$prefetch_cut = false;
 		if ( empty( $options['no_prefetch'] ) ) {
-			self::prefetch_many( wp_list_pluck( $links, 'url' ) );
+			self::prefetch_many( wp_list_pluck( $links, 'url' ), (float) ( $options['time_budget'] ?? self::http_time_budget() ) );
+			$prefetch_cut = self::$prefetch_truncated;
 		}
 
 		// 同一URLは1回だけ検査（結果は各出現箇所に反映）。
@@ -877,7 +889,7 @@ class LMC_Checker {
 		// 残りのリンクは静的チェックのみにする（結果は返せるので504を回避できる）。
 		$budget    = (float) ( $options['time_budget'] ?? self::http_time_budget() );
 		$started   = microtime( true );
-		$truncated = false;
+		$truncated = $prefetch_cut;
 
 		foreach ( $links as $link ) {
 			$cache_key = $link['url'] . '|' . $link['heading'];
@@ -916,13 +928,18 @@ class LMC_Checker {
 
 	/**
 	 * HTTPチェック全体の時間予算（秒）。
-	 * フロントのゲートウェイタイムアウト（多くは60秒）より十分手前で返せるようにする。
+	 * フロントのゲートウェイタイムアウト（多くは60秒）やPHPの実行時間制限より
+	 * 十分手前で必ず返せるようにする。ホストが set_time_limit を許可せず
+	 * max_execution_time が短い（例: 30秒）場合でも、その手前で打ち切る。
 	 */
 	private static function http_time_budget() {
-		/**
-		 * 既定45秒。サイトのゲートウェイ設定に応じてフィルタで調整できる。
-		 */
-		return (float) apply_filters( 'lmc_http_time_budget', 45 );
+		$budget = 45;
+		$max    = (int) ini_get( 'max_execution_time' ); // 0 = 無制限。
+		if ( $max > 0 ) {
+			// PHP制限の10秒手前まで（最低8秒）。
+			$budget = max( 8, min( $budget, $max - 10 ) );
+		}
+		return (float) apply_filters( 'lmc_http_time_budget', $budget );
 	}
 
 	/**

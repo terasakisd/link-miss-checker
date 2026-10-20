@@ -366,8 +366,18 @@
 				showResults( data, retryButton );
 			} )
 			.catch( function ( err ) {
-				checking = false;
-				showCheckError( err.message, retryButton );
+				// REST接続が切れた（Failed to fetch 等のネットワークエラー）場合、
+				// サイトのセキュリティがREST APIを塞いでいる可能性があるので
+				// admin-ajax経由でもう一度だけ試す。
+				runCheckViaAjax( content )
+					.then( function ( data ) {
+						checking = false;
+						showResults( data, retryButton );
+					} )
+					.catch( function () {
+						checking = false;
+						showCheckError( err.message, retryButton );
+					} );
 			} );
 	}
 
