@@ -168,6 +168,7 @@ class LMC_Rest {
 			'links'      => $result['links'],
 			'issues'     => $result['issues'],
 			'has_error'  => $has_error,
+			'truncated'  => ! empty( $result['truncated'] ),
 			'checked_at' => current_time( 'mysql' ),
 		);
 

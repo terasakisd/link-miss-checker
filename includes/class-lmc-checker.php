@@ -352,19 +352,7 @@ class LMC_Checker {
 			'timeout'     => $timeout,
 			'redirection' => 0,
 			'user-agent'  => 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-			'headers'     => array(
-				'Accept'                    => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-				'Accept-Language'           => 'ja,en-US;q=0.9,en;q=0.8',
-				'Cache-Control'             => 'max-age=0',
-				'Upgrade-Insecure-Requests' => '1',
-				'Sec-Fetch-Dest'            => 'document',
-				'Sec-Fetch-Mode'            => 'navigate',
-				'Sec-Fetch-Site'            => 'none',
-				'Sec-Fetch-User'            => '?1',
-				'sec-ch-ua'                 => '"Chromium";v="131", "Google Chrome";v="131", "Not_A Brand";v="24"',
-				'sec-ch-ua-mobile'          => '?0',
-				'sec-ch-ua-platform'        => '"macOS"',
-			),
+			'headers'     => self::browser_headers(),
 		);
 
 		$current    = $url;
@@ -426,17 +414,265 @@ class LMC_Checker {
 			break;
 		}
 
-		$result = array(
-			'status'     => $status,
-			'final_url'  => $current,
-			'redirected' => $redirected,
-			'body'       => mb_substr( (string) $body, 0, 100000 ),
-			'error'      => $error,
-			'ssl_issue'  => $ssl_issue,
-		);
+		$result = self::make_http_result( $status, $current, $redirected, $body, $error, $ssl_issue );
 
 		self::$http_cache[ $url ] = $result;
 		return $result;
+	}
+
+	/**
+	 * fetch結果の配列を組み立てる（逐次fetch・並列prefetchで共通）。
+	 */
+	private static function make_http_result( $status, $final_url, $redirected, $body, $error, $ssl_issue ) {
+		return array(
+			'status'     => (int) $status,
+			'final_url'  => $final_url,
+			'redirected' => (bool) $redirected,
+			'body'       => mb_substr( (string) $body, 0, 100000 ),
+			'error'      => (string) $error,
+			'ssl_issue'  => (bool) $ssl_issue,
+		);
+	}
+
+	/**
+	 * 共通のリクエストヘッダー（Chromeとして振る舞う）。
+	 */
+	private static function browser_headers() {
+		return array(
+			'Accept'                    => 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+			'Accept-Language'           => 'ja,en-US;q=0.9,en;q=0.8',
+			'Cache-Control'             => 'max-age=0',
+			'Upgrade-Insecure-Requests' => '1',
+			'Sec-Fetch-Dest'            => 'document',
+			'Sec-Fetch-Mode'            => 'navigate',
+			'Sec-Fetch-Site'            => 'none',
+			'Sec-Fetch-User'            => '?1',
+			'sec-ch-ua'                 => '"Chromium";v="131", "Google Chrome";v="131", "Not_A Brand";v="24"',
+			'sec-ch-ua-mobile'          => '?0',
+			'sec-ch-ua-platform'        => '"macOS"',
+		);
+	}
+
+	/**
+	 * 複数URLを並列に取得して $http_cache を温める。
+	 * WordPress同梱のRequestsライブラリ（内部でcurl_multi）でリダイレクト／
+	 * クッション追跡をラウンド単位で並列処理する。リンクが多い記事でも
+	 * 合計時間を大幅に短縮し、ゲートウェイタイムアウト（504）を防ぐ。
+	 *
+	 * 並列が使えない環境では何もせず、各リンクは従来どおり逐次 fetch() される。
+	 *
+	 * @param string[] $urls 取得対象のURL（http/https・絶対のみ）。
+	 */
+	public static function prefetch_many( $urls ) {
+		$ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
+		// http/https の絶対URLで、まだキャッシュされていないものだけ。
+		$urls = array_values( array_unique( array_filter( (array) $urls, function ( $u ) {
+			return is_string( $u ) && preg_match( '#^https?://#i', $u ) && ! isset( self::$http_cache[ $u ] );
+		} ) ) );
+		if ( empty( $urls ) ) {
+			return;
+		}
+
+		$class = '';
+		if ( class_exists( '\WpOrg\Requests\Requests' ) ) {
+			$class = '\WpOrg\Requests\Requests';
+		} elseif ( class_exists( 'Requests' ) ) {
+			$class = 'Requests';
+		}
+		if ( '' === $class ) {
+			return; // 並列ライブラリなし → 逐次フォールバック。
+		}
+
+		$timeout = (int) LMC_Settings::get( 'timeout' );
+		$headers = self::browser_headers();
+		$opts    = array(
+			'timeout'          => $timeout,
+			'connect_timeout'  => $timeout,
+			'useragent'        => $ua,
+			'follow_redirects' => true,  // HTTPリダイレクトはRequestsが追跡。
+			'redirects'        => 8,
+		);
+
+		// 各元URLの進行状態。
+		$state = array();
+		foreach ( $urls as $u ) {
+			$state[ $u ] = array(
+				'current'    => $u,
+				'redirected' => false,
+				'visited'    => array( $u => true ),
+				'ssl_issue'  => false,
+				'done'       => false,
+				'result'     => null,
+			);
+		}
+
+		// WP標準フィルタ（pre_http_request）用の擬似args。モックや外部通信ブロックを尊重する。
+		$wp_args = array( 'timeout' => $timeout, 'redirection' => 0, 'user-agent' => $ua, 'headers' => $headers );
+
+		// クッション（meta refresh）を最大6ラウンドまで並列で追跡。
+		for ( $round = 0; $round < 6; $round++ ) {
+			$batch = array();
+			foreach ( $state as $ou => $st ) {
+				if ( $st['done'] ) {
+					continue;
+				}
+				// WPのHTTPフィルタを先に通す（モック／WP_HTTP_BLOCK_EXTERNAL等）。
+				$pre = apply_filters( 'pre_http_request', false, $wp_args, $st['current'] );
+				// モックがSSL検証エラーを返したら、検証なしで再試行（逐次fetchと同じ）。
+				if ( is_wp_error( $pre ) && false !== stripos( $pre->get_error_message(), 'SSL certificate problem' ) ) {
+					if ( false !== stripos( $pre->get_error_message(), 'expired' ) ) {
+						$st['ssl_issue']        = true;
+						$state[ $ou ]['ssl_issue'] = true;
+					}
+					$pre = apply_filters( 'pre_http_request', false, array_merge( $wp_args, array( 'sslverify' => false ) ), $st['current'] );
+				}
+				if ( false !== $pre ) {
+					self::advance_prefetch_wp( $state[ $ou ], $pre );
+					continue;
+				}
+				$batch[ $ou ] = array( 'url' => $st['current'], 'type' => 'GET', 'headers' => $headers );
+			}
+			if ( empty( $batch ) ) {
+				break;
+			}
+
+			$responses = call_user_func( array( $class, 'request_multiple' ), $batch, $opts );
+			$ssl_retry = array();
+
+			foreach ( $responses as $ou => $resp ) {
+				if ( self::is_ssl_cert_error( $resp ) ) {
+					// SSL検証エラー → このラウンド後に検証なしで再試行。
+					$ssl_retry[ $ou ] = ( false !== stripos( self::err_message( $resp ), 'expired' ) );
+					continue;
+				}
+				self::advance_prefetch_requests( $state[ $ou ], $resp );
+			}
+
+			// SSL再試行（検証なし・並列）。
+			if ( ! empty( $ssl_retry ) ) {
+				$rbatch = array();
+				foreach ( $ssl_retry as $ou => $expired ) {
+					$rbatch[ $ou ] = array( 'url' => $state[ $ou ]['current'], 'type' => 'GET', 'headers' => $headers );
+				}
+				$rresp = call_user_func( array( $class, 'request_multiple' ), $rbatch, array_merge( $opts, array( 'verify' => false, 'verifyname' => false ) ) );
+				foreach ( $rresp as $ou => $resp ) {
+					if ( $ssl_retry[ $ou ] ) {
+						$state[ $ou ]['ssl_issue'] = true; // 期限切れは読者のブラウザもブロック。
+					}
+					self::advance_prefetch_requests( $state[ $ou ], $resp );
+				}
+			}
+		}
+
+		// 結果をキャッシュへ。
+		foreach ( $state as $ou => $st ) {
+			if ( null === $st['result'] ) {
+				$st['result'] = self::make_http_result( 0, $st['current'], $st['redirected'], '', '', $st['ssl_issue'] );
+			}
+			self::$http_cache[ $ou ] = $st['result'];
+		}
+	}
+
+	/**
+	 * Requestsライブラリのレスポンス／例外を受けて状態を進める。
+	 */
+	private static function advance_prefetch_requests( &$st, $resp ) {
+		// 例外（接続不可・リダイレクト過多など）。
+		if ( $resp instanceof \Exception || ( is_object( $resp ) && method_exists( $resp, 'getMessage' ) && ! isset( $resp->status_code ) ) ) {
+			self::advance_prefetch_core( $st, 0, $st['current'], '', self::err_message( $resp ) );
+			return;
+		}
+		$status = isset( $resp->status_code ) ? (int) $resp->status_code : 0;
+		$final  = ( isset( $resp->url ) && $resp->url ) ? (string) $resp->url : $st['current'];
+		$body   = isset( $resp->body ) ? (string) $resp->body : '';
+		self::advance_prefetch_core( $st, $status, $final, $body, '' );
+	}
+
+	/**
+	 * WPのHTTPフィルタ（pre_http_request）が返した擬似レスポンス／WP_Errorを受けて状態を進める。
+	 * モックや外部通信ブロックを並列経路でも尊重するための経路。
+	 */
+	private static function advance_prefetch_wp( &$st, $pre ) {
+		if ( is_wp_error( $pre ) ) {
+			self::advance_prefetch_core( $st, 0, $st['current'], '', $pre->get_error_message() );
+			return;
+		}
+		$status = (int) wp_remote_retrieve_response_code( $pre );
+		$body   = (string) wp_remote_retrieve_body( $pre );
+		// WPのモックはリダイレクトを自前で表現する（Locationヘッダ）か、最終応答を返す。
+		if ( $status >= 300 && $status < 400 ) {
+			$location = wp_remote_retrieve_header( $pre, 'location' );
+			if ( $location ) {
+				$next = self::resolve_url( $location, $st['current'] );
+				if ( '' !== $next && ! isset( $st['visited'][ $next ] ) ) {
+					$st['visited'][ $next ] = true;
+					$st['current']          = $next;
+					$st['redirected']       = true;
+					return;
+				}
+			}
+		}
+		self::advance_prefetch_core( $st, $status, $st['current'], $body, '' );
+	}
+
+	/**
+	 * 状態遷移の共通処理（リダイレクト追跡後の最終応答を受け取る）。
+	 * クッション（meta refresh）があれば次ラウンドへ、なければ確定。
+	 *
+	 * @param array  $st     参照渡しの進行状態。
+	 * @param int    $status HTTPステータス。
+	 * @param string $final  最終URL。
+	 * @param string $body   本文。
+	 * @param string $error  エラーメッセージ（あれば）。
+	 */
+	private static function advance_prefetch_core( &$st, $status, $final, $body, $error ) {
+		if ( '' !== $error ) {
+			$st['result'] = self::make_http_result( 0, $st['current'], $st['redirected'], '', $error, $st['ssl_issue'] );
+			$st['done']   = true;
+			return;
+		}
+
+		if ( $final !== $st['current'] ) {
+			$st['redirected'] = true;
+		}
+		$st['current'] = $final;
+
+		// クッションページ（meta refresh / JS転送）なら次ラウンドで追跡。
+		if ( $status < 400 ) {
+			$next = self::extract_meta_refresh_url( $body, $final );
+			if ( '' !== $next && ! isset( $st['visited'][ $next ] ) ) {
+				$st['visited'][ $next ] = true;
+				$st['current']          = $next;
+				$st['redirected']       = true;
+				return; // done=false のまま次ラウンドへ。
+			}
+		}
+
+		$st['result'] = self::make_http_result( $status, $final, $st['redirected'], $body, '', $st['ssl_issue'] );
+		$st['done']   = true;
+	}
+
+	/**
+	 * Requestsのレスポンスが SSL証明書エラーの例外か。
+	 */
+	private static function is_ssl_cert_error( $resp ) {
+		if ( ! ( $resp instanceof \Exception ) && ! ( is_object( $resp ) && method_exists( $resp, 'getMessage' ) && ! isset( $resp->status_code ) ) ) {
+			return false;
+		}
+		$msg = self::err_message( $resp );
+		return ( false !== stripos( $msg, 'SSL certificate problem' ) )
+			|| ( false !== stripos( $msg, 'certificate' ) && false !== stripos( $msg, 'SSL' ) );
+	}
+
+	/**
+	 * 例外／レスポンスからメッセージ文字列を取り出す。
+	 */
+	private static function err_message( $resp ) {
+		if ( is_object( $resp ) && method_exists( $resp, 'getMessage' ) ) {
+			return (string) $resp->getMessage();
+		}
+		return '';
 	}
 
 	/**
@@ -613,6 +849,12 @@ class LMC_Checker {
 			$links = array_values( $links );
 		}
 
+		// リンクが多い記事でも全リンクをチェックできるよう、HTTPアクセスを並列で
+		// まとめて先に取得してキャッシュを温める（逐次だと504になる記事の対策）。
+		if ( empty( $options['no_prefetch'] ) ) {
+			self::prefetch_many( wp_list_pluck( $links, 'url' ) );
+		}
+
 		// 同一URLは1回だけ検査（結果は各出現箇所に反映）。
 		$results = array();
 		$checked = array();
@@ -630,15 +872,27 @@ class LMC_Checker {
 			self::record_browser_target( $link['url'], (int) $options['post_id'] );
 		}
 
+		// リンクが多い記事でゲートウェイタイムアウト（504）になるのを防ぐため、
+		// HTTPチェック全体に時間予算を設ける。超過後はHTTPアクセスを打ち切り、
+		// 残りのリンクは静的チェックのみにする（結果は返せるので504を回避できる）。
+		$budget    = (float) ( $options['time_budget'] ?? self::http_time_budget() );
+		$started   = microtime( true );
+		$truncated = false;
+
 		foreach ( $links as $link ) {
 			$cache_key = $link['url'] . '|' . $link['heading'];
 			if ( isset( $checked[ $cache_key ] ) ) {
 				$problems = $checked[ $cache_key ];
 			} else {
-				$problems = self::check_link( $link, $options );
+				$link_options = $options;
+				// 予算超過後はHTTPアクセスを行わない（静的チェックのみ）。
+				if ( ( microtime( true ) - $started ) > $budget ) {
+					$link_options['check_http'] = false;
+					$truncated = true;
+				}
+				$problems = self::check_link( $link, $link_options );
 				$checked[ $cache_key ] = $problems;
 			}
-
 
 			if ( $problems ) {
 				$results[] = array(
@@ -654,9 +908,21 @@ class LMC_Checker {
 		$results = array_merge( $results, $button_issues );
 
 		return array(
-			'links'  => count( $links ) + count( $browser_links ) + count( $button_issues ),
-			'issues' => $results,
+			'links'     => count( $links ) + count( $browser_links ) + count( $button_issues ),
+			'issues'    => $results,
+			'truncated' => $truncated,
 		);
+	}
+
+	/**
+	 * HTTPチェック全体の時間予算（秒）。
+	 * フロントのゲートウェイタイムアウト（多くは60秒）より十分手前で返せるようにする。
+	 */
+	private static function http_time_budget() {
+		/**
+		 * 既定45秒。サイトのゲートウェイ設定に応じてフィルタで調整できる。
+		 */
+		return (float) apply_filters( 'lmc_http_time_budget', 45 );
 	}
 
 	/**

@@ -112,19 +112,28 @@
 				'</div>';
 		} ).join( '' );
 
+		var note = data.truncated
+			? '（リンクが多いため、一部のリンクはアクセス確認を省略しました。省略分は週次の自動巡回でチェックされます）'
+			: '';
+
 		var state, title, sub;
-		if ( data.issues.length === 0 ) {
+		if ( data.issues.length === 0 && ! data.truncated ) {
 			state = 'ok';
 			title = 'チェック完了';
 			sub   = data.links + ' 件のリンクを確認しました。問題はありません。そのまま更新します。';
+		} else if ( data.issues.length === 0 && data.truncated ) {
+			// 問題は見つからなかったが全リンクは確認できていないので自動更新しない。
+			state = 'warning';
+			title = 'チェック完了（一部のみ）';
+			sub   = data.links + ' 件のリンクを確認し、問題は見つかりませんでした。' + note;
 		} else if ( data.has_error ) {
 			state = 'error';
 			title = 'リンクに問題が見つかりました';
-			sub   = '全 ' + data.links + ' リンクを確認しました。修正してから更新してください。';
+			sub   = '全 ' + data.links + ' リンクを確認しました。修正してから更新してください。' + note;
 		} else {
 			state = 'warning';
 			title = '確認が必要な警告があります';
-			sub   = '全 ' + data.links + ' リンクを確認しました。内容を確認のうえ更新してください。';
+			sub   = '全 ' + data.links + ' リンクを確認しました。内容を確認のうえ更新してください。' + note;
 		}
 
 		var icons = {
