@@ -405,9 +405,12 @@ class LMC_Checker {
 			$body = wp_remote_retrieve_body( $response );
 
 			// クッションページなら遷移先を追跡（200かつ転送指定がある場合）。
+			// ただし転送先が外部ドメイン（広告主・ASP）なら追わない。クッション自体が
+			// 生きていれば読者は正しく遷移でき、外部広告主はbot対策で検証できず
+			// 追跡が極端に遅くなる（最大8ホップ×タイムアウト）ため。
 			if ( $status < 400 ) {
 				$next = self::extract_meta_refresh_url( $body, $current );
-				if ( '' !== $next && ! isset( $visited[ $next ] ) ) {
+				if ( '' !== $next && self::is_same_host( $next, $current ) && ! isset( $visited[ $next ] ) ) {
 					$current    = $next;
 					$redirected = true;
 					$body       = '';
@@ -547,7 +550,7 @@ class LMC_Checker {
 				break;
 			}
 
-			$responses = call_user_func( array( $class, 'request_multiple' ), $batch, $opts );
+			$responses = self::request_multiple_chunked( $class, $batch, $opts, $deadline );
 			$ssl_retry = array();
 
 			foreach ( $responses as $ou => $resp ) {
@@ -565,7 +568,7 @@ class LMC_Checker {
 				foreach ( $ssl_retry as $ou => $expired ) {
 					$rbatch[ $ou ] = array( 'url' => $state[ $ou ]['current'], 'type' => 'GET', 'headers' => $headers );
 				}
-				$rresp = call_user_func( array( $class, 'request_multiple' ), $rbatch, array_merge( $opts, array( 'verify' => false, 'verifyname' => false ) ) );
+				$rresp = self::request_multiple_chunked( $class, $rbatch, array_merge( $opts, array( 'verify' => false, 'verifyname' => false ) ), $deadline );
 				foreach ( $rresp as $ou => $resp ) {
 					if ( $ssl_retry[ $ou ] ) {
 						$state[ $ou ]['ssl_issue'] = true; // 期限切れは読者のブラウザもブロック。
@@ -582,6 +585,35 @@ class LMC_Checker {
 			}
 			self::$http_cache[ $ou ] = $st['result'];
 		}
+	}
+
+	/**
+	 * request_multiple を同時接続数の上限ごとに分割して実行する。
+	 * 大量リンクを一斉に投げると、自サイト（同一ドメインのクッション等）への
+	 * 接続が詰まって逆に遅くなるため、ブラウザ同様に少数ずつ並列化する。
+	 *
+	 * @param string $class    Requestsクラス名。
+	 * @param array  $batch    リクエスト配列（キー保持）。
+	 * @param array  $opts     オプション。
+	 * @param float  $deadline この時刻を過ぎたら残りは投げない。
+	 * @return array キー => レスポンス／例外。
+	 */
+	private static function request_multiple_chunked( $class, $batch, $opts, $deadline ) {
+		$concurrency = (int) apply_filters( 'lmc_fetch_concurrency', 6 );
+		$concurrency = max( 1, $concurrency );
+
+		$responses = array();
+		foreach ( array_chunk( $batch, $concurrency, true ) as $chunk ) {
+			if ( microtime( true ) >= $deadline ) {
+				self::$prefetch_truncated = true;
+				break;
+			}
+			$resp = call_user_func( array( $class, 'request_multiple' ), $chunk, $opts );
+			if ( is_array( $resp ) ) {
+				$responses += $resp;
+			}
+		}
+		return $responses;
 	}
 
 	/**
@@ -649,9 +681,11 @@ class LMC_Checker {
 		$st['current'] = $final;
 
 		// クッションページ（meta refresh / JS転送）なら次ラウンドで追跡。
+		// 外部ドメインへの転送は追わない（逐次fetchと同じ方針。外部広告主は
+		// bot対策で検証不能・追跡が遅いため、クッション自体の生存を確認すれば十分）。
 		if ( $status < 400 ) {
 			$next = self::extract_meta_refresh_url( $body, $final );
-			if ( '' !== $next && ! isset( $st['visited'][ $next ] ) ) {
+			if ( '' !== $next && self::is_same_host( $next, $final ) && ! isset( $st['visited'][ $next ] ) ) {
 				$st['visited'][ $next ] = true;
 				$st['current']          = $next;
 				$st['redirected']       = true;
@@ -661,6 +695,15 @@ class LMC_Checker {
 
 		$st['result'] = self::make_http_result( $status, $final, $st['redirected'], $body, '', $st['ssl_issue'] );
 		$st['done']   = true;
+	}
+
+	/**
+	 * 2つのURLが同一ホストか。
+	 */
+	private static function is_same_host( $a, $b ) {
+		$ha = strtolower( (string) wp_parse_url( $a, PHP_URL_HOST ) );
+		$hb = strtolower( (string) wp_parse_url( $b, PHP_URL_HOST ) );
+		return '' !== $ha && $ha === $hb;
 	}
 
 	/**
