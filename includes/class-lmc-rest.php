@@ -32,12 +32,13 @@ class LMC_Rest {
 
 		$post_id = isset( $_POST['post_id'] ) ? (int) $_POST['post_id'] : 0;
 		$content = isset( $_POST['content'] ) ? (string) wp_unslash( $_POST['content'] ) : '';
+		$offset  = isset( $_POST['link_offset'] ) ? max( 0, (int) $_POST['link_offset'] ) : 0;
 
 		if ( $post_id && ! current_user_can( 'edit_post', $post_id ) ) {
 			wp_send_json( array( 'error' => '権限がありません' ), 403 );
 		}
 
-		wp_send_json( self::run_check( $post_id, $content ) );
+		wp_send_json( self::run_check( $post_id, $content, $offset ) );
 	}
 
 	public static function register_routes() {
@@ -65,6 +66,11 @@ class LMC_Rest {
 					'type'     => 'string',
 					'required' => false,
 					'default'  => '',
+				),
+				'link_offset' => array(
+					'type'     => 'integer',
+					'required' => false,
+					'default'  => 0,
 				),
 			),
 		) );
@@ -123,12 +129,13 @@ class LMC_Rest {
 	public static function handle_check( WP_REST_Request $request ) {
 		$post_id = (int) $request->get_param( 'post_id' );
 		$content = (string) $request->get_param( 'content' );
+		$offset  = max( 0, (int) $request->get_param( 'link_offset' ) );
 
 		if ( $post_id && ! current_user_can( 'edit_post', $post_id ) ) {
 			return new WP_Error( 'lmc_forbidden', '権限がありません', array( 'status' => 403 ) );
 		}
 
-		return rest_ensure_response( self::run_check( $post_id, $content ) );
+		return rest_ensure_response( self::run_check( $post_id, $content, $offset ) );
 	}
 
 	/**
@@ -136,9 +143,10 @@ class LMC_Rest {
 	 *
 	 * @param int    $post_id 投稿ID。
 	 * @param string $content 本文HTML（空なら保存済み本文を使用）。
-	 * @return array links / issues / has_error / checked_at
+	 * @param int    $offset  チェックを開始するリンク位置（分割チェックの再開用）。
+	 * @return array links / issues / has_error / next_offset / checked_at
 	 */
-	public static function run_check( $post_id, $content ) {
+	public static function run_check( $post_id, $content, $offset = 0 ) {
 		// 本文が送られてこなければ保存済みの本文を使う。
 		if ( '' === $content && $post_id ) {
 			$post = get_post( $post_id );
@@ -152,7 +160,13 @@ class LMC_Rest {
 			@set_time_limit( 120 );
 		}
 
-		$result = LMC_Checker::check_content( $content, array( 'post_id' => $post_id ) );
+		// link_offset を渡すと分割チェックモードになり、時間内に終わらない場合は
+		// next_offset（続きの開始位置）が返る。エディタ側がそれを受けて続きを
+		// 自動リクエストするため、リンクが何本あっても全リンク必ずチェックされる。
+		$result = LMC_Checker::check_content( $content, array(
+			'post_id'     => $post_id,
+			'link_offset' => $offset,
+		) );
 
 		$has_error = false;
 		foreach ( $result['issues'] as $issue ) {
@@ -164,16 +178,21 @@ class LMC_Rest {
 			}
 		}
 
+		$next_offset = isset( $result['next_offset'] ) ? $result['next_offset'] : null;
+
 		$response = array(
-			'links'      => $result['links'],
-			'issues'     => $result['issues'],
-			'has_error'  => $has_error,
-			'truncated'  => ! empty( $result['truncated'] ),
-			'checked_at' => current_time( 'mysql' ),
+			'links'       => $result['links'],
+			'issues'      => $result['issues'],
+			'has_error'   => $has_error,
+			// 旧バージョンのエディタJS向け互換: 続きがある間はtruncated扱いにして
+			// 「全部確認できた」と誤表示されないようにする。
+			'truncated'   => ( null !== $next_offset ),
+			'next_offset' => $next_offset,
+			'checked_at'  => current_time( 'mysql' ),
 		);
 
-		// 最終チェック結果を投稿メタに記録（監査用）。
-		if ( $post_id ) {
+		// 最終チェック結果を投稿メタに記録（監査用。チェック完了時のみ）。
+		if ( $post_id && null === $next_offset ) {
 			update_post_meta( $post_id, '_lmc_last_check', array(
 				'checked_at'   => $response['checked_at'],
 				'content_hash' => md5( $content ),

@@ -26,6 +26,9 @@ class LMC_Checker {
 	/** @var bool 直近の並列プリフェッチが時間切れで打ち切られたか */
 	private static $prefetch_truncated = false;
 
+	/** @var array 時間切れでプリフェッチできなかったURL（URL => true）。分割チェックの再開位置判定に使う */
+	private static $prefetch_unresolved = array();
+
 	/**
 	 * リンク1件を検査して問題の配列を返す。
 	 *
@@ -251,6 +254,12 @@ class LMC_Checker {
 		$issues = array();
 
 		if ( ! empty( $http['error'] ) ) {
+			// チェック元サーバーのOpenSSLが新しすぎて古いTLS方式を拒否するだけの
+			// エラー（unsafe legacy renegotiation 等）は、読者のブラウザでは
+			// 問題なく開けるため報告しない（docomo等の大手でも発生する）。
+			if ( self::is_env_tls_error( $http['error'] ) ) {
+				return $issues;
+			}
 			$issues[] = array(
 				'code'     => 'http_error',
 				'severity' => self::SEVERITY_ERROR,
@@ -467,10 +476,15 @@ class LMC_Checker {
 	 *
 	 * 並列が使えない環境では何もせず、各リンクは従来どおり逐次 fetch() される。
 	 *
-	 * @param string[] $urls 取得対象のURL（http/https・絶対のみ）。
+	 * @param string[] $urls             取得対象のURL（http/https・絶対のみ）。
+	 * @param float    $budget           時間予算（秒）。0なら自動。
+	 * @param bool     $leave_unresolved trueなら時間切れで取得できなかったURLを
+	 *                                   キャッシュせず $prefetch_unresolved に記録する
+	 *                                   （分割チェックで次のリクエストに回すため）。
 	 */
-	public static function prefetch_many( $urls, $budget = 0 ) {
-		self::$prefetch_truncated = false;
+	public static function prefetch_many( $urls, $budget = 0, $leave_unresolved = false ) {
+		self::$prefetch_truncated  = false;
+		self::$prefetch_unresolved = array();
 		$deadline = microtime( true ) + ( $budget > 0 ? (float) $budget : self::http_time_budget() );
 		$ua = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
@@ -530,6 +544,11 @@ class LMC_Checker {
 				if ( $st['done'] ) {
 					continue;
 				}
+				// 時間切れならこのラウンドの残りは処理しない（未解決として残す）。
+				if ( microtime( true ) >= $deadline ) {
+					self::$prefetch_truncated = true;
+					break;
+				}
 				// WPのHTTPフィルタを先に通す（モック／WP_HTTP_BLOCK_EXTERNAL等）。
 				$pre = apply_filters( 'pre_http_request', false, $wp_args, $st['current'] );
 				// モックがSSL検証エラーを返したら、検証なしで再試行（逐次fetchと同じ）。
@@ -581,6 +600,12 @@ class LMC_Checker {
 		// 結果をキャッシュへ。
 		foreach ( $state as $ou => $st ) {
 			if ( null === $st['result'] ) {
+				// 時間切れで取得できなかったURL。分割チェック時はキャッシュせず
+				// 「未解決」として記録し、次のリクエストで必ず再チェックする。
+				if ( $leave_unresolved && self::$prefetch_truncated ) {
+					self::$prefetch_unresolved[ $ou ] = true;
+					continue;
+				}
 				$st['result'] = self::make_http_result( 0, $st['current'], $st['redirected'], '', '', $st['ssl_issue'] );
 			}
 			self::$http_cache[ $ou ] = $st['result'];
@@ -704,6 +729,19 @@ class LMC_Checker {
 		$ha = strtolower( (string) wp_parse_url( $a, PHP_URL_HOST ) );
 		$hb = strtolower( (string) wp_parse_url( $b, PHP_URL_HOST ) );
 		return '' !== $ha && $ha === $hb;
+	}
+
+	/**
+	 * チェック元環境（OpenSSLのバージョン等）が原因で発生するTLSエラーか。
+	 * リンク先サーバーが古いTLS再ネゴシエーション方式のみ対応している場合、
+	 * OpenSSL 3系は既定で接続を拒否するが、読者のブラウザは問題なく開ける。
+	 *
+	 * @param string $error エラーメッセージ。
+	 */
+	private static function is_env_tls_error( $error ) {
+		$error = strtolower( (string) $error );
+		return false !== strpos( $error, 'legacy renegotiation' )
+			|| false !== strpos( $error, '0a000152' );
 	}
 
 	/**
@@ -902,11 +940,33 @@ class LMC_Checker {
 			$links = array_values( $links );
 		}
 
+		// 分割チェック（エディタの更新前チェック用）: link_offset が指定されたら
+		// そのリンク以降だけをチェックし、時間内に終わらなければ next_offset を
+		// 返して続きを次のリクエストへ引き継ぐ。エディタ側が自動で続きを
+		// リクエストするため、リンクが何本あっても必ず全リンクがチェックされる。
+		$resumable = isset( $options['link_offset'] );
+		$offset    = $resumable ? max( 0, (int) $options['link_offset'] ) : 0;
+		$total     = count( $links );
+		$slice     = ( $offset > 0 ) ? array_slice( $links, $offset ) : $links;
+
 		// リンクが多い記事でも全リンクをチェックできるよう、HTTPアクセスを並列で
 		// まとめて先に取得してキャッシュを温める（逐次だと504になる記事の対策）。
 		$prefetch_cut = false;
 		if ( empty( $options['no_prefetch'] ) ) {
-			self::prefetch_many( wp_list_pluck( $links, 'url' ), (float) ( $options['time_budget'] ?? self::http_time_budget() ) );
+			// 自サイトの投稿など、DBで実在確認できるリンクはHTTPアクセス不要なので
+			// 事前取得の対象から外す（自サイトへの同時アクセスを減らして詰まりを防ぐ）。
+			$fetch_urls = array();
+			foreach ( $slice as $link ) {
+				if ( ! preg_match( '#^https?://#i', $link['url'] ) ) {
+					continue;
+				}
+				$internal = self::check_internal_slug( $link['url'] );
+				if ( $internal['is_internal_ok'] || ! empty( $internal['issues'] ) ) {
+					continue; // HTTPアクセスなしで判定できる。
+				}
+				$fetch_urls[] = $link['url'];
+			}
+			self::prefetch_many( $fetch_urls, (float) ( $options['time_budget'] ?? self::http_time_budget() ), $resumable );
 			$prefetch_cut = self::$prefetch_truncated;
 		}
 
@@ -914,39 +974,61 @@ class LMC_Checker {
 		$results = array();
 		$checked = array();
 
-		foreach ( $browser_links as $link ) {
-			$problems = self::check_link( $link, array_merge( $options, array( 'check_http' => false ) ) );
-			if ( $problems ) {
-				$results[] = array(
-					'url'         => $link['url'],
-					'anchor_text' => $link['anchor_text'],
-					'heading'     => $link['heading'],
-					'problems'    => $problems,
-				);
+		// ブラウザ検証リンクとJSボタンの問題は、分割チェックの2回目以降では
+		// 重複報告になるため最初のリクエスト（offset=0）でのみ扱う。
+		if ( 0 === $offset ) {
+			foreach ( $browser_links as $link ) {
+				$problems = self::check_link( $link, array_merge( $options, array( 'check_http' => false ) ) );
+				if ( $problems ) {
+					$results[] = array(
+						'url'         => $link['url'],
+						'anchor_text' => $link['anchor_text'],
+						'heading'     => $link['heading'],
+						'problems'    => $problems,
+					);
+				}
+				self::record_browser_target( $link['url'], (int) $options['post_id'] );
 			}
-			self::record_browser_target( $link['url'], (int) $options['post_id'] );
 		}
 
 		// リンクが多い記事でゲートウェイタイムアウト（504）になるのを防ぐため、
 		// HTTPチェック全体に時間予算を設ける。超過後はHTTPアクセスを打ち切り、
 		// 残りのリンクは静的チェックのみにする（結果は返せるので504を回避できる）。
-		$budget    = (float) ( $options['time_budget'] ?? self::http_time_budget() );
-		$started   = microtime( true );
-		$truncated = $prefetch_cut;
+		$budget        = (float) ( $options['time_budget'] ?? self::http_time_budget() );
+		$started       = microtime( true );
+		$truncated     = $prefetch_cut;
+		$http_checking = ! isset( $options['check_http'] ) || $options['check_http'];
+		$next_offset   = null;
+		$did_check     = 0;
 
-		foreach ( $links as $link ) {
+		foreach ( $slice as $i => $link ) {
 			$cache_key = $link['url'] . '|' . $link['heading'];
 			if ( isset( $checked[ $cache_key ] ) ) {
 				$problems = $checked[ $cache_key ];
 			} else {
 				$link_options = $options;
-				// 予算超過後はHTTPアクセスを行わない（静的チェックのみ）。
-				if ( ( microtime( true ) - $started ) > $budget ) {
+				$needs_fetch  = $http_checking
+					&& preg_match( '#^https?://#i', $link['url'] )
+					&& ! isset( self::$http_cache[ $link['url'] ] );
+
+				if ( $resumable ) {
+					// 分割チェック: 時間内に取得できなかったリンクに当たったら
+					// そこで打ち切り、再開位置（next_offset）を返す。続きは
+					// エディタ側が自動で再リクエストする（必ず1件以上は進める）。
+					if ( $did_check > 0 && $needs_fetch
+						&& ( isset( self::$prefetch_unresolved[ $link['url'] ] )
+							|| ( microtime( true ) - $started ) > $budget ) ) {
+						$next_offset = $offset + $i;
+						break;
+					}
+				} elseif ( ( microtime( true ) - $started ) > $budget ) {
+					// 従来動作（週次巡回など）: 予算超過後はHTTPアクセスを行わない（静的チェックのみ）。
 					$link_options['check_http'] = false;
 					$truncated = true;
 				}
 				$problems = self::check_link( $link, $link_options );
 				$checked[ $cache_key ] = $problems;
+				$did_check++;
 			}
 
 			if ( $problems ) {
@@ -959,13 +1041,22 @@ class LMC_Checker {
 			}
 		}
 
-		// 遷移先未解決のJSボタンは巡回対象の絞り込みに関係なく常に報告する。
-		$results = array_merge( $results, $button_issues );
+		// 遷移先未解決のJSボタンは巡回対象の絞り込みに関係なく常に報告する
+		// （分割チェックでは重複しないよう最初のリクエストでのみ）。
+		if ( 0 === $offset ) {
+			$results = array_merge( $results, $button_issues );
+		}
+
+		if ( $resumable ) {
+			// 分割チェックでは「打ち切り＝続きあり」なので truncated は next_offset と同義。
+			$truncated = ( null !== $next_offset );
+		}
 
 		return array(
-			'links'     => count( $links ) + count( $browser_links ) + count( $button_issues ),
-			'issues'    => $results,
-			'truncated' => $truncated,
+			'links'       => $total + count( $browser_links ) + count( $button_issues ),
+			'issues'      => $results,
+			'truncated'   => $truncated,
+			'next_offset' => $next_offset,
 		);
 	}
 

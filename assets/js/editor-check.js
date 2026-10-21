@@ -311,12 +311,13 @@
 	/* ---------- チェック実行 ---------- */
 
 	// admin-ajax.php 経由のチェック（REST APIがWAF等でブロックされるサイト用）
-	function runCheckViaAjax( content ) {
+	function runCheckViaAjax( content, offset ) {
 		var form = new FormData();
 		form.append( 'action', 'lmc_check' );
 		form.append( 'nonce', lmcConfig.ajaxNonce );
 		form.append( 'post_id', lmcConfig.postId );
 		form.append( 'content', content );
+		form.append( 'link_offset', offset || 0 );
 
 		return fetch( lmcConfig.ajaxUrl, {
 			method: 'POST',
@@ -330,16 +331,9 @@
 		} );
 	}
 
-	function runCheck( retryButton ) {
-		if ( checking ) {
-			return;
-		}
-		checking = true;
-		showSpinner();
-
-		var content = getContent();
-
-		fetch( lmcConfig.restUrl, {
+	// REST API 経由のチェック。
+	function runCheckViaRest( content, offset ) {
+		return fetch( lmcConfig.restUrl, {
 			method: 'POST',
 			headers: {
 				'Content-Type': 'application/json',
@@ -348,37 +342,84 @@
 			credentials: 'same-origin',
 			body: JSON.stringify( {
 				post_id: lmcConfig.postId,
-				content: content
+				content: content,
+				link_offset: offset || 0
 			} )
-		} )
-			.then( function ( res ) {
-				if ( ! res.ok ) {
-					// RESTがセキュリティ設定でブロックされている場合はadmin-ajaxで再試行。
-					if ( 401 === res.status || 403 === res.status ) {
-						return runCheckViaAjax( content );
+		} ).then( function ( res ) {
+			if ( ! res.ok ) {
+				throw new Error( 'サーバーエラー（HTTP ' + res.status + '）' );
+			}
+			return res.json();
+		} );
+	}
+
+	// スピナーに進捗を表示（分割チェックの続きを待っている間）。
+	function updateSpinnerProgress( checkedCount, total ) {
+		var sub = document.querySelector( '#lmc-overlay .lmc-spinner-sub' );
+		if ( sub && total ) {
+			sub.textContent = total + ' 件のリンクのうち ' + checkedCount + ' 件まで確認しました。続きをチェックしています…';
+		}
+	}
+
+	// サーバーは時間内に終わらない場合 next_offset（続きの開始位置）を返す。
+	// その場合は続きを自動でリクエストし、全リンクのチェックが終わるまで繰り返す。
+	function runCheck( retryButton ) {
+		if ( checking ) {
+			return;
+		}
+		checking = true;
+		showSpinner();
+
+		var content  = getContent();
+		var merged   = { links: 0, issues: [], has_error: false, truncated: false };
+		var useAjax  = false;
+		var rounds   = 0;
+		var MAX_ROUNDS = 50; // 念のための上限（1回に最低1リンクは必ず進む）。
+
+		function finish( data ) {
+			merged.checked_at = data.checked_at;
+			checking = false;
+			showResults( merged, retryButton );
+		}
+
+		function step( offset ) {
+			rounds++;
+			var request = useAjax ? runCheckViaAjax( content, offset ) : runCheckViaRest( content, offset );
+
+			request
+				.then( function ( data ) {
+					if ( data && data.error ) {
+						throw new Error( data.error );
 					}
-					throw new Error( 'サーバーエラー（HTTP ' + res.status + '）' );
-				}
-				return res.json();
-			} )
-			.then( function ( data ) {
-				checking = false;
-				showResults( data, retryButton );
-			} )
-			.catch( function ( err ) {
-				// REST接続が切れた（Failed to fetch 等のネットワークエラー）場合、
-				// サイトのセキュリティがREST APIを塞いでいる可能性があるので
-				// admin-ajax経由でもう一度だけ試す。
-				runCheckViaAjax( content )
-					.then( function ( data ) {
-						checking = false;
-						showResults( data, retryButton );
-					} )
-					.catch( function () {
-						checking = false;
-						showCheckError( err.message, retryButton );
-					} );
-			} );
+					merged.links     = data.links || merged.links;
+					merged.issues    = merged.issues.concat( data.issues || [] );
+					merged.has_error = merged.has_error || !! data.has_error;
+
+					var hasNext = ( typeof data.next_offset === 'number' ) && data.next_offset > offset;
+					if ( hasNext && rounds < MAX_ROUNDS ) {
+						updateSpinnerProgress( data.next_offset, data.links );
+						step( data.next_offset );
+						return;
+					}
+					// 旧サーバー（next_offset未対応）が打ち切った場合、または上限到達時のみ
+					// 「一部のみ」の表示になる。通常は必ず全リンク確認して終わる。
+					merged.truncated = hasNext || ( !! data.truncated && typeof data.next_offset !== 'number' );
+					finish( data );
+				} )
+				.catch( function ( err ) {
+					// REST接続が切れた（Failed to fetch 等）場合や403の場合は、
+					// 同じ位置から admin-ajax 経由に切り替えてもう一度だけ試す。
+					if ( ! useAjax ) {
+						useAjax = true;
+						step( offset );
+						return;
+					}
+					checking = false;
+					showCheckError( err.message, retryButton );
+				} );
+		}
+
+		step( 0 );
 	}
 
 	/* ---------- クリックの横取り ---------- */
